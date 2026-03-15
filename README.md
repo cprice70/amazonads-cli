@@ -1,6 +1,18 @@
 # Amazon Ads CLI
 
-A command-line interface for the Amazon Ads API. Manage campaigns, keywords, and product ads directly from your terminal.
+[![CI](https://github.com/cprice70/amazonads-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/cprice70/amazonads-cli/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/amazonads-cli.svg)](https://www.npmjs.com/package/amazonads-cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A command-line interface for the **Amazon Ads API**. Unlike bulk-sheet tools that work on exported CSV files, this CLI makes **live API calls** — query your account, create campaigns, update bids, and pull reports in real time without touching the Amazon Ads console.
+
+## Prerequisites
+
+You need an approved Amazon Ads API application to use this tool.
+
+1. Sign in at [advertising.amazon.com](https://advertising.amazon.com) and navigate to **Tools → API access**
+2. Request API access and create an application to obtain a Client ID and Client Secret
+3. See [Amazon's API onboarding guide](https://advertising.amazon.com/API/docs/en-us/onboarding/overview) for full details
 
 ## Installation
 
@@ -12,15 +24,21 @@ npm run build
 npm link
 ```
 
+Or install from npm (once published):
+
+```bash
+npm install -g amazonads-cli
+```
+
 ## Authentication
 
 ```bash
 amazonads auth login
 ```
 
-This will prompt for your Amazon Ads API Client ID and Client Secret, open a browser to complete OAuth, and save credentials to `~/.config/amazonads-cli/config.json`.
+Prompts for your Client ID and Client Secret, opens a browser to complete Amazon OAuth, and saves credentials to `~/.config/amazonads-cli/config.json`.
 
-You can also create the config file manually:
+You can also create the config file manually if you already have a refresh token:
 
 ```json
 {
@@ -39,7 +57,7 @@ You can also create the config file manually:
 | `clientSecret` | string | From Amazon Ads API console |
 | `refreshToken` | `Atzr\|xxx` | Obtained via `auth login` or existing token |
 | `region` | `NA`, `EU`, `FE` | North America, Europe, Far East |
-| `sandbox` | `true` / `false` | Use test API endpoint |
+| `sandbox` | `true` / `false` | Use the Amazon Ads test endpoint |
 | `defaultProfileId` | numeric string | Avoids needing `--profile` on every command |
 
 Environment variables override the config file: `AMAZON_ADS_CLIENT_ID`, `AMAZON_ADS_CLIENT_SECRET`, `AMAZON_ADS_REFRESH_TOKEN`, `AMAZON_ADS_REGION`, `AMAZON_ADS_SANDBOX`, `AMAZON_ADS_PROFILE_ID`.
@@ -61,7 +79,7 @@ amazonads profiles
 amazonads profiles --json
 ```
 
-Lists all advertising profiles on your account. Run this first to get profile IDs.
+Lists all advertising profiles on your account. Run this first to find your profile IDs — you'll need one for most other commands.
 
 ### Campaigns
 
@@ -123,7 +141,7 @@ Use this to retrieve a pending report returned by `campaigns performance`.
 
 ## Output
 
-All commands support `--json` to output raw API responses instead of a formatted table.
+All commands support `--json` to output raw API responses instead of a formatted table, making it easy to pipe results into `jq` or other tools.
 
 ## Development
 
@@ -134,3 +152,7 @@ npm run watch       # Watch mode
 ```
 
 Requires Node.js 18+.
+
+## License
+
+MIT
