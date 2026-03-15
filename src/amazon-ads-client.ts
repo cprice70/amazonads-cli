@@ -1,4 +1,3 @@
-import https from "https";
 import zlib from "zlib";
 import { promisify } from "util";
 

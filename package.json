@@ -1,6 +1,6 @@
 {
   "name": "amazonads-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI for Amazon Ads API",
   "type": "module",
   "main": "build/index.js",
@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "dev": "tsx watch src/index.ts",
     "watch": "tsc --watch",
     "start": "node build/index.js",
     "test": "vitest run",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.13",
+    "tsx": "^4.7.0",
     "typescript": "^5.7.2",
     "vitest": "^4.0.18"
   }

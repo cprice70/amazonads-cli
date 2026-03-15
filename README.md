@@ -146,9 +146,16 @@ All commands support `--json` to output raw API responses instead of a formatted
 ## Development
 
 ```bash
+npm run dev         # Run without building (hot-reloads on save)
 npm run build       # Compile TypeScript
+npm run watch       # Watch mode (compile only)
 npm run test        # Run tests
-npm run watch       # Watch mode
+```
+
+Pass CLI arguments after `--` when using `dev`:
+
+```bash
+npm run dev -- campaigns list --profile 1234567890
 ```
 
 Requires Node.js 18+.

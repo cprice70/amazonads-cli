@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { createRequire } from "module";
 import { program } from "commander";
 import { loadConfig } from "./config.js";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 import { AmazonAdsClient } from "./amazon-ads-client.js";
 import { printError } from "./output.js";
 import { registerAuthCommands } from "./commands/auth.js";
@@ -22,10 +26,7 @@ const client = new AmazonAdsClient({
 });
 
 function resolveProfileId(opts: { profile?: string }): string {
-  const profileId =
-    opts.profile ||
-    process.env.AMAZON_ADS_PROFILE_ID ||
-    config.defaultProfileId;
+  const profileId = opts.profile ?? config.defaultProfileId;
 
   if (!profileId) {
     printError(
@@ -40,7 +41,7 @@ function resolveProfileId(opts: { profile?: string }): string {
 program
   .name("amazonads")
   .description("Amazon Ads CLI")
-  .version("0.1.0");
+  .version(version);
 
 registerAuthCommands(program);
 registerProfilesCommands(program, client);
