@@ -5,5 +5,8 @@ export default defineConfig({
     globals: true,
     include: ["src/**/__tests__/**/*.test.ts"],
     exclude: ["build/**", "node_modules/**"],
+    coverage: {
+      exclude: ["node_modules/", "dist/"],
+    },
   },
 });
