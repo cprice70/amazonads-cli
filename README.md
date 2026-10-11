@@ -132,12 +132,28 @@ amazonads product-ads list --profile <id> --campaign <campaign-id> --ad-group <a
 ### Reports
 
 ```bash
-# Check status of / download a report by ID
-amazonads reports get --profile <id> --report <report-id>
+# Create a Sponsored Products report and wait for it (7-day attribution columns)
+amazonads reports create --type search-term --start 2026-09-11 --end 2026-10-10 --out search_term.csv
+amazonads reports create --type targeting   --start 2026-09-11 --end 2026-10-10 --daily --out targeting.csv
+amazonads reports create --type campaign    --start 2026-09-11 --end 2026-10-10 --out campaign.json
+
+# Request without waiting, then fetch later
+amazonads reports create --type search-term --start 2026-09-11 --end 2026-10-10 --no-wait
+amazonads reports get --profile <id> --report <report-id> --out search_term.csv
 amazonads reports get --profile <id> --report <report-id> --json
 ```
 
-Use this to retrieve a pending report returned by `campaigns performance`.
+**Report types:** `search-term` (spSearchTerm), `targeting` (spTargeting), `campaign` (spCampaigns).
+`--daily` returns one row per day with a `date` column; the default is one summary row per entity.
+`--out` writes CSV, or JSON when the file name ends in `.json`. `--timeout <seconds>` caps the wait (default 600).
+The campaign report cannot include `portfolioId`; join on `campaignId` against `campaigns list` instead.
+
+### Portfolios
+
+```bash
+amazonads portfolios list --profile <id>
+amazonads portfolios list --profile <id> --json
+```
 
 ## Output
 

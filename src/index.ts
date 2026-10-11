@@ -14,6 +14,7 @@ import { registerCampaignsCommands } from "./commands/campaigns.js";
 import { registerKeywordsCommands } from "./commands/keywords.js";
 import { registerAdsCommands } from "./commands/ads.js";
 import { registerReportsCommands } from "./commands/reports.js";
+import { registerPortfoliosCommands } from "./commands/portfolios.js";
 
 const config = loadConfig();
 
@@ -49,5 +50,6 @@ registerCampaignsCommands(program, client, resolveProfileId);
 registerKeywordsCommands(program, client, resolveProfileId);
 registerAdsCommands(program, client, resolveProfileId);
 registerReportsCommands(program, client, resolveProfileId);
+registerPortfoliosCommands(program, client, resolveProfileId);
 
 program.parse();

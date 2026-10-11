@@ -11,6 +11,18 @@ export interface AmazonAdsConfig {
   sandbox?: boolean;
 }
 
+export interface ReportSpec {
+  name: string;
+  startDate: string;
+  endDate: string;
+  reportTypeId: string;
+  groupBy: string[];
+  columns: string[];
+  timeUnit?: "SUMMARY" | "DAILY";
+  adProduct?: string;
+  filters?: unknown[];
+}
+
 export class AmazonAdsClient {
   private config: AmazonAdsConfig;
   private accessToken?: string;
@@ -288,6 +300,88 @@ export class AmazonAdsClient {
       reportId,
       checkUrl: `/reporting/reports/${reportId}`,
     };
+  }
+
+  /**
+   * Create an async v3 report. Returns the reportId; poll with getReport()
+   * or waitForReport().
+   */
+  async createReport(
+    profileId: string,
+    spec: ReportSpec
+  ): Promise<{ reportId: string }> {
+    const contentType = "application/vnd.createasyncreportrequest.v3+json";
+    const body = {
+      name: spec.name,
+      startDate: spec.startDate,
+      endDate: spec.endDate,
+      configuration: {
+        adProduct: spec.adProduct ?? "SPONSORED_PRODUCTS",
+        groupBy: spec.groupBy,
+        columns: spec.columns,
+        reportTypeId: spec.reportTypeId,
+        timeUnit: spec.timeUnit ?? "SUMMARY",
+        format: "GZIP_JSON",
+        ...(spec.filters ? { filters: spec.filters } : {}),
+      },
+    };
+
+    return this.makeRequest(
+      "POST",
+      "/reporting/reports",
+      profileId,
+      body,
+      contentType
+    ) as Promise<{ reportId: string }>;
+  }
+
+  /**
+   * Poll a report until it completes or the timeout passes. Returns the
+   * decompressed rows on success; throws on FAILURE or timeout.
+   */
+  async waitForReport(
+    profileId: string,
+    reportId: string,
+    options: { timeoutMs?: number; pollMs?: number; onPoll?: (status: string) => void } = {}
+  ): Promise<unknown[]> {
+    const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+    const pollMs = options.pollMs ?? 5000;
+    const deadline = Date.now() + timeoutMs;
+
+    while (true) {
+      const statusResponse = (await this.makeRequest(
+        "GET",
+        `/reporting/reports/${reportId}`,
+        profileId
+      )) as { status: string; url?: string; failureReason?: string };
+
+      options.onPoll?.(statusResponse.status);
+
+      if (statusResponse.status === "COMPLETED" && statusResponse.url) {
+        const data = await this.downloadReport(statusResponse.url);
+        return Array.isArray(data) ? data : [data];
+      }
+
+      if (statusResponse.status === "FAILURE") {
+        throw new Error(
+          `Report ${reportId} failed: ${statusResponse.failureReason || "Unknown error"}`
+        );
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Report ${reportId} still ${statusResponse.status} after ${Math.round(timeoutMs / 1000)}s. ` +
+            `Retrieve later with: amazonads reports get --report ${reportId}`
+        );
+      }
+
+      await this.sleep(pollMs);
+    }
+  }
+
+  async getPortfolios(profileId: string): Promise<unknown> {
+    const contentType = "application/vnd.spPortfolio.v3+json";
+    return this.makeRequest("POST", "/portfolios/list", profileId, {}, contentType);
   }
 
   private async downloadReport(url: string): Promise<unknown> {
