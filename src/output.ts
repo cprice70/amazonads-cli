@@ -49,3 +49,24 @@ export function formatCurrency(amount: number | string | undefined): string {
   if (isNaN(num)) return "$0.00";
   return `$${num.toFixed(2)}`;
 }
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Flatten an array of objects to CSV. Header is the union of keys in first-seen order. */
+export function toCsv(rows: Record<string, unknown>[]): string {
+  const headers: string[] = [];
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (!headers.includes(key)) headers.push(key);
+    }
+  }
+  const lines = [headers.map(csvEscape).join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((h) => csvEscape(row[h])).join(","));
+  }
+  return lines.join("\n") + "\n";
+}
