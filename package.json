@@ -1,6 +1,6 @@
 {
   "name": "amazonads-cli",
-  "version": "0.1.1",
+  "version": "2.0.0",
   "description": "CLI for Amazon Ads API",
   "author": "Chris Price",
   "license": "MIT",
