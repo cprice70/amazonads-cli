@@ -4,7 +4,10 @@
   "description": "CLI for Amazon Ads API",
   "author": "Chris Price",
   "license": "MIT",
-  "repository": "https://github.com/cprice70/amazonads-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cprice70/amazonads-cli.git"
+  },
   "homepage": "https://github.com/cprice70/amazonads-cli#readme",
   "keywords": [
     "amazon",
