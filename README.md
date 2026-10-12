@@ -176,6 +176,19 @@ npm run dev -- campaigns list --profile 1234567890
 
 Requires Node.js 18+.
 
+## Releasing
+
+Releases publish to npm from GitHub Actions using [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC). No npm token is stored in the repository.
+
+```bash
+npm version 2.1.0 --no-git-tag-version   # bump package.json and package-lock.json
+git commit -am "Bump version to 2.1.0"
+git push
+git tag v2.1.0 && git push origin v2.1.0  # the tag push triggers .github/workflows/release.yml
+```
+
+The trusted publisher on npmjs.com must point at this repository (`cprice70/amazonads-cli`) and the workflow file name `release.yml`.
+
 ## License
 
 MIT
