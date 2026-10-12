@@ -33,3 +33,6 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public
+        env:
+          # Surfaces the "oidc" log lines that explain a failed token exchange.
+          NPM_CONFIG_LOGLEVEL: verbose
