@@ -1,5 +1,6 @@
 import zlib from "zlib";
 import { promisify } from "util";
+import { getTokenUrl, normalizeRegion } from "./lwa.js";
 
 const gunzip = promisify(zlib.gunzip);
 
@@ -118,7 +119,7 @@ export class AmazonAdsClient {
       client_secret: clientSecret,
     });
 
-    const response = await fetch("https://api.amazon.com/auth/o2/token", {
+    const response = await fetch(getTokenUrl(normalizeRegion(this.config.region)), {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

@@ -36,7 +36,7 @@ npm install -g amazonads-cli
 amazonads auth login
 ```
 
-Prompts for your Client ID and Client Secret, opens a browser to complete Amazon OAuth, and saves credentials to `~/.config/amazonads-cli/config.json`.
+Prompts for your Client ID, Client Secret, and region (NA, EU, or FE), opens the regional Login with Amazon consent page, and saves credentials to `~/.config/amazonads-cli/config.json`.
 
 You can also create the config file manually if you already have a refresh token:
 

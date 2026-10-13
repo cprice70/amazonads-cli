@@ -4,9 +4,9 @@ import readline from "readline/promises";
 import { Command } from "commander";
 import { loadConfig, saveConfig, deleteConfig, getConfigPath } from "../config.js";
 import { printSuccess, printError, printWarning } from "../output.js";
+import { buildConsentUrl, getTokenUrl, normalizeRegion, REGIONS } from "../lwa.js";
 
 const REDIRECT_URI = "http://localhost:3000/callback";
-const SCOPES = "advertising::campaign_management";
 
 function maskSecret(value: string | undefined): string {
   if (!value) return "(not set)";
@@ -38,12 +38,13 @@ export function registerAuthCommands(program: Command): void {
           process.exit(1);
         }
 
-        // Build the authorization URL
-        const authUrl = new URL("https://www.amazon.com/ap/oa");
-        authUrl.searchParams.set("client_id", clientId.trim());
-        authUrl.searchParams.set("scope", SCOPES);
-        authUrl.searchParams.set("response_type", "code");
-        authUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+        // Region picks the Login with Amazon consent page, so ask before opening the browser.
+        const regionAnswer = await rl.question(`Region (${REGIONS.join("/")}) [NA]: `);
+        const region = normalizeRegion(regionAnswer);
+        const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
+        const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
+
+        const authUrl = buildConsentUrl(region, clientId.trim(), REDIRECT_URI);
 
         console.log("\nStarting local callback server on http://localhost:3000...");
 
@@ -86,7 +87,7 @@ export function registerAuthCommands(program: Command): void {
                 client_secret: clientSecret.trim(),
               });
 
-              const response = await fetch("https://api.amazon.com/auth/o2/token", {
+              const response = await fetch(getTokenUrl(region), {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: tokenData.toString(),
@@ -102,16 +103,8 @@ export function registerAuthCommands(program: Command): void {
               res.writeHead(200, { "Content-Type": "text/html" });
               res.end(htmlPage("Success!", "Your token has been saved. You can close this window."));
 
-              server.close(async () => {
+              server.close(() => {
                 try {
-                  const regionAnswer = await rl.question(
-                    "\nRegion (NA/EU/FE) [NA]: "
-                  );
-                  const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
-
-                  const region = regionAnswer.trim().toUpperCase() || "NA";
-                  const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
-
                   const existing = loadConfig();
                   saveConfig({
                     ...existing,

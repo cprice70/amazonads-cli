@@ -12,15 +12,39 @@ function tokenResponse(): Response {
   return jsonResponse(200, { access_token: "access-123", expires_in: 3600 });
 }
 
-function makeClient(): AmazonAdsClient {
+function makeClient(region = "NA"): AmazonAdsClient {
   return new AmazonAdsClient({
     clientId: "client-id",
     clientSecret: "client-secret",
     refreshToken: "refresh-token",
-    region: "NA",
+    region,
     sandbox: false,
   });
 }
+
+describe("AmazonAdsClient token refresh", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("refreshes against the regional Login with Amazon host", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, []));
+
+    await makeClient("EU").getProfiles();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.amazon.co.uk/auth/o2/token");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://advertising-api-eu.amazon.com/v2/profiles");
+  });
+});
 
 describe("AmazonAdsClient multi-status handling", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
