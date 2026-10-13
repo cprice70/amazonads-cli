@@ -1,17 +1,54 @@
 import http from "http";
+import { randomBytes } from "crypto";
 import { URL } from "url";
 import readline from "readline/promises";
 import { Command } from "commander";
 import { loadConfig, saveConfig, deleteConfig, getConfigPath } from "../config.js";
 import { printSuccess, printError, printWarning } from "../output.js";
-import { buildConsentUrl, getTokenUrl, normalizeRegion, REGIONS } from "../lwa.js";
+import {
+  buildConsentUrl,
+  getTokenUrl,
+  normalizeRegion,
+  parseCallback,
+  REGIONS,
+} from "../lwa.js";
 
-const REDIRECT_URI = "http://localhost:3000/callback";
+const CALLBACK_PORT = 3000;
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 
 function maskSecret(value: string | undefined): string {
   if (!value) return "(not set)";
   if (value.length <= 8) return "****";
   return value.slice(0, 4) + "****" + value.slice(-4);
+}
+
+/** Escape a value for interpolation into the callback HTML page. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Turn a listen() failure into something the user can act on. */
+export function listenErrorMessage(err: unknown, port: number): string {
+  const code = (err as { code?: string })?.code;
+  if (code === "EADDRINUSE") {
+    return (
+      `Port ${port} is already in use, so the OAuth callback server cannot start. ` +
+      `Stop whatever is listening on ${port} (often a dev server) and run auth login again.`
+    );
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+function htmlPage(title: string, body: string): string {
+  return (
+    `<html><body style="font-family:Arial,sans-serif;padding:50px;text-align:center">` +
+    `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p></body></html>`
+  );
 }
 
 export function registerAuthCommands(program: Command): void {
@@ -30,10 +67,10 @@ export function registerAuthCommands(program: Command): void {
         console.log("\nAmazon Ads CLI — OAuth Login");
         console.log("=============================\n");
 
-        const clientId = await rl.question("Client ID: ");
-        const clientSecret = await rl.question("Client Secret: ");
+        const clientId = (await rl.question("Client ID: ")).trim();
+        const clientSecret = (await rl.question("Client Secret: ")).trim();
 
-        if (!clientId.trim() || !clientSecret.trim()) {
+        if (!clientId || !clientSecret) {
           printError("Client ID and Client Secret are required.");
           process.exit(1);
         }
@@ -44,11 +81,13 @@ export function registerAuthCommands(program: Command): void {
         const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
         const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
 
-        const authUrl = buildConsentUrl(region, clientId.trim(), REDIRECT_URI);
+        // Random state ties the callback to this login attempt (CSRF protection).
+        const state = randomBytes(16).toString("hex");
+        const authUrl = buildConsentUrl(region, clientId, REDIRECT_URI, state);
 
-        console.log("\nStarting local callback server on http://localhost:3000...");
+        console.log(`\nStarting local callback server on http://localhost:${CALLBACK_PORT}...`);
 
-        await new Promise<void>((resolve, reject) => {
+        const refreshToken = await new Promise<string>((resolve, reject) => {
           const server = http.createServer(async (req, res) => {
             const url = new URL(req.url || "", `http://${req.headers.host}`);
 
@@ -58,23 +97,15 @@ export function registerAuthCommands(program: Command): void {
               return;
             }
 
-            const code = url.searchParams.get("code");
-            const error = url.searchParams.get("error");
-
-            if (error) {
+            let code: string;
+            try {
+              code = parseCallback(url.searchParams, state);
+            } catch (e) {
+              const message = e instanceof Error ? e.message : String(e);
               res.writeHead(400, { "Content-Type": "text/html" });
-              res.end(htmlPage("Authorization Failed", `Error: ${error}`));
-              printError(`\nAuthorization failed: ${error}`);
+              res.end(htmlPage("Authorization Failed", message));
               server.close();
-              reject(new Error(error));
-              return;
-            }
-
-            if (!code) {
-              res.writeHead(400, { "Content-Type": "text/html" });
-              res.end(htmlPage("Missing Authorization Code", "No code received."));
-              server.close();
-              reject(new Error("No authorization code received"));
+              reject(new Error(message));
               return;
             }
 
@@ -83,8 +114,8 @@ export function registerAuthCommands(program: Command): void {
                 grant_type: "authorization_code",
                 code,
                 redirect_uri: REDIRECT_URI,
-                client_id: clientId.trim(),
-                client_secret: clientSecret.trim(),
+                client_id: clientId,
+                client_secret: clientSecret,
               });
 
               const response = await fetch(getTokenUrl(region), {
@@ -98,38 +129,20 @@ export function registerAuthCommands(program: Command): void {
                 throw new Error(`Token exchange failed: ${errText}`);
               }
 
-              const tokens = await response.json() as { refresh_token: string };
+              const tokens = (await response.json()) as { refresh_token: string };
 
               res.writeHead(200, { "Content-Type": "text/html" });
               res.end(htmlPage("Success!", "Your token has been saved. You can close this window."));
-
-              server.close(() => {
-                try {
-                  const existing = loadConfig();
-                  saveConfig({
-                    ...existing,
-                    clientId: clientId.trim(),
-                    clientSecret: clientSecret.trim(),
-                    refreshToken: tokens.refresh_token,
-                    region,
-                    sandbox,
-                  });
-
-                  printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
-                  resolve();
-                } catch (e) {
-                  reject(e);
-                }
-              });
+              server.close(() => resolve(tokens.refresh_token));
             } catch (e) {
               res.writeHead(500, { "Content-Type": "text/html" });
-              res.end(htmlPage("Token Exchange Failed", String(e)));
+              res.end(htmlPage("Token Exchange Failed", e instanceof Error ? e.message : String(e)));
               server.close();
               reject(e);
             }
           });
 
-          server.listen(3000, "127.0.0.1", async () => {
+          server.listen(CALLBACK_PORT, "127.0.0.1", async () => {
             console.log("Callback server started.\n");
             console.log("Opening browser to Amazon OAuth...");
             console.log(`\n  ${authUrl.toString()}\n`);
@@ -145,9 +158,21 @@ export function registerAuthCommands(program: Command): void {
           });
 
           server.on("error", (err) => {
-            reject(err);
+            reject(new Error(listenErrorMessage(err, CALLBACK_PORT)));
           });
         });
+
+        const existing = loadConfig();
+        saveConfig({
+          ...existing,
+          clientId,
+          clientSecret,
+          refreshToken,
+          region,
+          sandbox,
+        });
+
+        printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
       } catch (err) {
         printError(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
@@ -186,8 +211,4 @@ export function registerAuthCommands(program: Command): void {
       deleteConfig();
       printSuccess("Logged out. Config file deleted.");
     });
-}
-
-function htmlPage(title: string, body: string): string {
-  return `<html><body style="font-family:Arial,sans-serif;padding:50px;text-align:center"><h1>${title}</h1><p>${body}</p></body></html>`;
 }
