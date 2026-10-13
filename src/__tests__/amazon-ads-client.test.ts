@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { gzipSync } from "zlib";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -117,5 +118,54 @@ describe("AmazonAdsClient multi-status handling", () => {
     fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse(200, body));
 
     await expect(makeClient().getCampaigns("profile-1")).resolves.toEqual(body);
+  });
+});
+
+describe("AmazonAdsClient.getCampaignPerformance", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function gzipResponse(rows: unknown[]): Response {
+    return new Response(gzipSync(JSON.stringify(rows)), { status: 200 });
+  }
+
+  function mockCompletedReport(rows: unknown[]): void {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { reportId: "r1" }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { status: "COMPLETED", url: "https://example.com/r1.gz" })
+      )
+      .mockResolvedValueOnce(gzipResponse(rows));
+  }
+
+  it("returns only the requested campaign's rows", async () => {
+    mockCompletedReport([
+      { campaignId: 111, campaignName: "A" },
+      { campaignId: 222, campaignName: "B" },
+    ]);
+
+    const rows = await makeClient().getCampaignPerformance("p", "222", "2026-10-01", "2026-10-10");
+
+    expect(rows).toEqual([{ campaignId: 222, campaignName: "B" }]);
+  });
+
+  it("returns an empty list, not every campaign, when the campaign has no rows", async () => {
+    mockCompletedReport([
+      { campaignId: 111, campaignName: "A" },
+      { campaignId: 222, campaignName: "B" },
+    ]);
+
+    const rows = await makeClient().getCampaignPerformance("p", "999", "2026-10-01", "2026-10-10");
+
+    expect(rows).toEqual([]);
   });
 });

@@ -316,12 +316,12 @@ export class AmazonAdsClient {
         // Step 3: Download and decompress the report
         const reportData = await this.downloadReport(statusResponse.url);
 
-        // Filter to requested campaign if specified
+        // Filter to the requested campaign. An empty result is correct here;
+        // never fall back to the whole account's rows.
         if (campaignId && Array.isArray(reportData)) {
-          const filtered = reportData.filter(
+          return reportData.filter(
             (row: Record<string, unknown>) => String(row.campaignId) === campaignId
           );
-          return filtered.length > 0 ? filtered : reportData;
         }
 
         return reportData;
