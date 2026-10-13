@@ -1,6 +1,7 @@
 import zlib from "zlib";
 import { promisify } from "util";
 import { getTokenUrl, normalizeRegion } from "./lwa.js";
+import { buildReportSpec } from "./report-presets.js";
 
 const gunzip = promisify(zlib.gunzip);
 
@@ -290,93 +291,28 @@ export class AmazonAdsClient {
     return this.listAll(path, profileId, body, contentType, "campaigns");
   }
 
+  /**
+   * Performance rows for one campaign over a date range. Builds the standard
+   * campaign report (7-day attribution) and waits for Amazon to generate it.
+   */
   async getCampaignPerformance(
     profileId: string,
     campaignId: string,
     startDate: string,
-    endDate: string
-  ): Promise<unknown> {
-    // v3 reporting API - create async report
-    const contentType = "application/vnd.createasyncreportrequest.v3+json";
+    endDate: string,
+    options: { timeoutMs?: number } = {}
+  ): Promise<Record<string, unknown>[]> {
+    const spec = buildReportSpec("campaign", startDate, endDate, false);
+    spec.name = `Campaign ${campaignId} Performance Report`;
 
-    const reportBody = {
-      name: `Campaign ${campaignId} Performance Report`,
-      startDate,
-      endDate,
-      configuration: {
-        adProduct: "SPONSORED_PRODUCTS",
-        groupBy: ["campaign"],
-        columns: [
-          "campaignId",
-          "campaignName",
-          "impressions",
-          "clicks",
-          "cost",
-          "spend",
-          "sales14d",
-          "purchases14d",
-          "unitsSoldClicks14d",
-          "clickThroughRate",
-          "costPerClick",
-        ],
-        reportTypeId: "spCampaigns",
-        timeUnit: "SUMMARY",
-        format: "GZIP_JSON",
-      },
-    };
+    const { reportId } = await this.createReport(profileId, spec);
+    const rows = (await this.waitForReport(profileId, reportId, options)) as Record<
+      string,
+      unknown
+    >[];
 
-    // Step 1: Create the report
-    const createResponse = await this.makeRequest(
-      "POST",
-      "/reporting/reports",
-      profileId,
-      reportBody,
-      contentType
-    ) as { reportId: string };
-
-    const reportId = createResponse.reportId;
-
-    // Step 2: Poll until report is ready (max 5 seconds)
-    const maxAttempts = 5;
-    const pollInterval = 1000; // 1 second
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const statusResponse = await this.makeRequest(
-        "GET",
-        `/reporting/reports/${reportId}`,
-        profileId
-      ) as { status: string; url?: string };
-
-      if (statusResponse.status === "COMPLETED" && statusResponse.url) {
-        // Step 3: Download and decompress the report
-        const reportData = await this.downloadReport(statusResponse.url);
-
-        // Filter to the requested campaign. An empty result is correct here;
-        // never fall back to the whole account's rows.
-        if (campaignId && Array.isArray(reportData)) {
-          return reportData.filter(
-            (row: Record<string, unknown>) => String(row.campaignId) === campaignId
-          );
-        }
-
-        return reportData;
-      }
-
-      if (statusResponse.status === "FAILURE") {
-        throw new Error(`Report generation failed for reportId: ${reportId}`);
-      }
-
-      // Wait before next poll
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
-
-    // Return pending status with reportId so user can check later
-    return {
-      status: "PENDING",
-      message: `Report still processing after ${maxAttempts * pollInterval / 1000} seconds`,
-      reportId,
-      checkUrl: `/reporting/reports/${reportId}`,
-    };
+    // An empty result is correct here; never fall back to the whole account's rows.
+    return rows.filter((row) => String(row.campaignId) === campaignId);
   }
 
   /**
