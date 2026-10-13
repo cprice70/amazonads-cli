@@ -93,7 +93,7 @@ amazonads campaigns list --profile <id> --json
 # Campaign performance (7-day attribution; waits for Amazon to build the report, --timeout <seconds> caps it)
 amazonads campaigns performance --profile <id> --campaign <id> --start 2024-01-01 --end 2024-01-31
 
-# Create a campaign (always created in PAUSED state)
+# Create a Sponsored Products campaign (always created in PAUSED state; --type sponsoredProducts only)
 amazonads campaigns create \
   --profile <id> \
   --name "My Campaign" \

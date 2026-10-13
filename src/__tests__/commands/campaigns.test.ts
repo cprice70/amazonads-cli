@@ -149,3 +149,64 @@ describe("campaigns commands", () => {
     expect(processExitSpy).toHaveBeenCalledWith(1);
   });
 });
+
+describe("campaigns option validation", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeProgram(client: AmazonAdsClient): Command {
+    const program = new Command();
+    program.exitOverride();
+    program.configureOutput({ writeErr: () => {}, writeOut: () => {} });
+    registerCampaignsCommands(program, client, resolveProfileId);
+    return program;
+  }
+
+  it("rejects an unknown campaign type on list", async () => {
+    const program = makeProgram(makeClient());
+
+    await expect(
+      program.parseAsync(["node", "cli", "campaigns", "list", "--type", "sponsoredFoo"])
+    ).rejects.toThrow(/sponsoredProducts, sponsoredBrands, sponsoredDisplay/);
+  });
+
+  it("accepts state in any case and passes the canonical value on", async () => {
+    const client = makeClient();
+    (client.getCampaigns as ReturnType<typeof vi.fn>).mockResolvedValue({ campaigns: [] });
+
+    await makeProgram(client).parseAsync(["node", "cli", "campaigns", "list", "--state", "enabled"]);
+
+    expect(client.getCampaigns).toHaveBeenCalledWith("test-profile-123", "ENABLED", undefined);
+  });
+
+  it("only allows sponsoredProducts on create", async () => {
+    const program = makeProgram(makeClient());
+
+    await expect(
+      program.parseAsync([
+        "node", "cli", "campaigns", "create",
+        "--name", "x", "--type", "sponsoredBrands", "--targeting", "MANUAL",
+        "--budget", "5", "--start", "2026-10-13",
+      ])
+    ).rejects.toThrow(/sponsoredProducts/);
+  });
+
+  it("rejects an unknown targeting type on create", async () => {
+    const program = makeProgram(makeClient());
+
+    await expect(
+      program.parseAsync([
+        "node", "cli", "campaigns", "create",
+        "--name", "x", "--type", "sponsoredProducts", "--targeting", "broad",
+        "--budget", "5", "--start", "2026-10-13",
+      ])
+    ).rejects.toThrow(/MANUAL, AUTO/);
+  });
+});
