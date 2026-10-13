@@ -11,6 +11,8 @@ export interface CliConfig {
   defaultProfileId?: string;
 }
 
+const DEFAULTS: CliConfig = { region: "NA", sandbox: false };
+
 export function getConfigPath(): string {
   return path.join(os.homedir(), ".config", "amazonads-cli", "config.json");
 }
@@ -19,15 +21,23 @@ export function loadConfig(): CliConfig {
   const configPath = getConfigPath();
   let fileConfig: CliConfig = {};
 
+  let raw: string | undefined;
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    fileConfig = JSON.parse(raw) as CliConfig;
+    raw = fs.readFileSync(configPath, "utf-8");
   } catch {
-    // File doesn't exist or is invalid — start with empty config
+    // No config file yet; env vars or `auth login` will supply credentials.
   }
 
-  // Environment variables take precedence over file config
-  const config: CliConfig = { ...fileConfig };
+  if (raw !== undefined) {
+    try {
+      fileConfig = JSON.parse(raw) as CliConfig;
+    } catch {
+      console.warn(`Warning: ${configPath} is not valid JSON and was ignored.`);
+    }
+  }
+
+  // Precedence: environment variables, then the config file, then defaults.
+  const config: CliConfig = { ...DEFAULTS, ...fileConfig };
 
   if (process.env.AMAZON_ADS_CLIENT_ID) {
     config.clientId = process.env.AMAZON_ADS_CLIENT_ID;

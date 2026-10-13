@@ -100,3 +100,35 @@ describe("config", () => {
     expect(() => deleteConfig()).not.toThrow();
   });
 });
+
+describe("config defaults", () => {
+  const testConfigDir = path.join(os.tmpdir(), "amazonads-cli-defaults-" + Date.now());
+
+  beforeEach(() => {
+    vi.spyOn(os, "homedir").mockReturnValue(testConfigDir);
+    delete process.env.AMAZON_ADS_REGION;
+    delete process.env.AMAZON_ADS_SANDBOX;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(testConfigDir, { recursive: true, force: true });
+  });
+
+  it("defaults region to NA and sandbox to false", () => {
+    const config = loadConfig();
+    expect(config.region).toBe("NA");
+    expect(config.sandbox).toBe(false);
+  });
+
+  it("warns and ignores a config file that is not valid JSON", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.writeFileSync(getConfigPath(), "{ not json");
+
+    const config = loadConfig();
+
+    expect(config.clientId).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/not valid JSON/));
+  });
+});
