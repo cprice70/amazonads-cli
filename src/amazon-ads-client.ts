@@ -23,6 +23,43 @@ export interface ReportSpec {
   filters?: unknown[];
 }
 
+interface RejectedItem {
+  index?: number;
+  errors?: { errorType?: string; errorValue?: unknown }[];
+}
+
+/**
+ * Amazon's v3/v4 batch endpoints (create/update/delete) return 207 with
+ * `{ <entity>: { success: [...], error: [...] } }`. Throw when any item was
+ * rejected so callers never report success for a failed write.
+ */
+function throwIfItemsRejected(body: unknown): void {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return;
+
+  for (const [entity, value] of Object.entries(body as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const errors = (value as { error?: unknown }).error;
+    if (!Array.isArray(errors) || errors.length === 0) continue;
+
+    const details = (errors as RejectedItem[])
+      .map((item) => {
+        const reasons = (item.errors ?? [])
+          .map((e) => {
+            const type = e.errorType ?? "UNKNOWN_ERROR";
+            const value = e.errorValue === undefined ? "" : ` ${JSON.stringify(e.errorValue)}`;
+            return `${type}${value}`;
+          })
+          .join("; ");
+        return `item ${item.index ?? "?"}: ${reasons || "no details"}`;
+      })
+      .join("\n");
+
+    throw new Error(
+      `Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`
+    );
+  }
+}
+
 export class AmazonAdsClient {
   private config: AmazonAdsConfig;
   private accessToken?: string;
@@ -158,7 +195,11 @@ export class AmazonAdsClient {
         if (!text) {
           return { success: true, campaignId: path.split("/").pop() };
         }
-        return JSON.parse(text);
+        const parsed: unknown = JSON.parse(text);
+        // Batch endpoints answer 207 Multi-Status and report per-item failures
+        // in the body, so an OK status alone does not mean the write succeeded.
+        throwIfItemsRejected(parsed);
+        return parsed;
       }
 
       const errorText = await response.text();
