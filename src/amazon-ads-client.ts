@@ -1,5 +1,6 @@
 import zlib from "zlib";
 import { promisify } from "util";
+import { getTokenUrl, normalizeRegion } from "./lwa.js";
 
 const gunzip = promisify(zlib.gunzip);
 
@@ -21,6 +22,43 @@ export interface ReportSpec {
   timeUnit?: "SUMMARY" | "DAILY";
   adProduct?: string;
   filters?: unknown[];
+}
+
+interface RejectedItem {
+  index?: number;
+  errors?: { errorType?: string; errorValue?: unknown }[];
+}
+
+/**
+ * Amazon's v3/v4 batch endpoints (create/update/delete) return 207 with
+ * `{ <entity>: { success: [...], error: [...] } }`. Throw when any item was
+ * rejected so callers never report success for a failed write.
+ */
+function throwIfItemsRejected(body: unknown): void {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return;
+
+  for (const [entity, value] of Object.entries(body as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const errors = (value as { error?: unknown }).error;
+    if (!Array.isArray(errors) || errors.length === 0) continue;
+
+    const details = (errors as RejectedItem[])
+      .map((item) => {
+        const reasons = (item.errors ?? [])
+          .map((e) => {
+            const type = e.errorType ?? "UNKNOWN_ERROR";
+            const value = e.errorValue === undefined ? "" : ` ${JSON.stringify(e.errorValue)}`;
+            return `${type}${value}`;
+          })
+          .join("; ");
+        return `item ${item.index ?? "?"}: ${reasons || "no details"}`;
+      })
+      .join("\n");
+
+    throw new Error(
+      `Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`
+    );
+  }
 }
 
 export class AmazonAdsClient {
@@ -81,7 +119,7 @@ export class AmazonAdsClient {
       client_secret: clientSecret,
     });
 
-    const response = await fetch("https://api.amazon.com/auth/o2/token", {
+    const response = await fetch(getTokenUrl(normalizeRegion(this.config.region)), {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -158,7 +196,11 @@ export class AmazonAdsClient {
         if (!text) {
           return { success: true, campaignId: path.split("/").pop() };
         }
-        return JSON.parse(text);
+        const parsed: unknown = JSON.parse(text);
+        // Batch endpoints answer 207 Multi-Status and report per-item failures
+        // in the body, so an OK status alone does not mean the write succeeded.
+        throwIfItemsRejected(parsed);
+        return parsed;
       }
 
       const errorText = await response.text();
@@ -181,6 +223,42 @@ export class AmazonAdsClient {
     }
 
     throw lastError || new Error("Request failed after retries");
+  }
+
+  /**
+   * POST a v3/v4 list endpoint and follow `nextToken` until every page has
+   * been fetched. Pages are merged under `key` so callers see one response.
+   */
+  private async listAll(
+    path: string,
+    profileId: string,
+    body: Record<string, unknown>,
+    contentType: string,
+    key: string
+  ): Promise<unknown> {
+    const items: unknown[] = [];
+    let merged: Record<string, unknown> = {};
+    let nextToken: string | undefined;
+
+    do {
+      const page = (await this.makeRequest(
+        "POST",
+        path,
+        profileId,
+        nextToken ? { ...body, nextToken } : body,
+        contentType
+      )) as Record<string, unknown> | unknown[];
+
+      // Older endpoints answer with a bare array and no paging.
+      if (Array.isArray(page)) return page;
+
+      const { nextToken: token, ...rest } = page;
+      merged = rest;
+      if (Array.isArray(page[key])) items.push(...(page[key] as unknown[]));
+      nextToken = typeof token === "string" && token ? token : undefined;
+    } while (nextToken);
+
+    return { ...merged, [key]: items };
   }
 
   async getProfiles(): Promise<unknown> {
@@ -210,7 +288,7 @@ export class AmazonAdsClient {
       body.stateFilter = { include: [state.toUpperCase()] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "campaigns");
   }
 
   async getCampaignPerformance(
@@ -274,12 +352,12 @@ export class AmazonAdsClient {
         // Step 3: Download and decompress the report
         const reportData = await this.downloadReport(statusResponse.url);
 
-        // Filter to requested campaign if specified
+        // Filter to the requested campaign. An empty result is correct here;
+        // never fall back to the whole account's rows.
         if (campaignId && Array.isArray(reportData)) {
-          const filtered = reportData.filter(
+          return reportData.filter(
             (row: Record<string, unknown>) => String(row.campaignId) === campaignId
           );
-          return filtered.length > 0 ? filtered : reportData;
         }
 
         return reportData;
@@ -381,7 +459,7 @@ export class AmazonAdsClient {
 
   async getPortfolios(profileId: string): Promise<unknown> {
     const contentType = "application/vnd.spPortfolio.v3+json";
-    return this.makeRequest("POST", "/portfolios/list", profileId, {}, contentType);
+    return this.listAll("/portfolios/list", profileId, {}, contentType, "portfolios");
   }
 
   private async downloadReport(url: string): Promise<unknown> {
@@ -444,7 +522,7 @@ export class AmazonAdsClient {
       body.adGroupIdFilter = { include: [adGroupId] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "keywords");
   }
 
   async updateKeywordBid(
@@ -520,7 +598,7 @@ export class AmazonAdsClient {
       body.adGroupIdFilter = { include: [adGroupId] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "productAds");
   }
 
   async archiveCampaign(
