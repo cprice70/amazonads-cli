@@ -10,6 +10,7 @@ import {
   colorState,
   formatCurrency,
 } from "../output.js";
+import { choiceOption, CAMPAIGN_TYPES, CAMPAIGN_STATES, TARGETING_TYPES } from "../options.js";
 
 interface Campaign {
   campaignId?: string | number;
@@ -43,8 +44,8 @@ export function registerCampaignsCommands(
     .command("list")
     .description("List campaigns")
     .option("--profile <id>", "Profile ID")
-    .option("--state <state>", "Filter by state (ENABLED, PAUSED, ARCHIVED)")
-    .option("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
+    .addOption(choiceOption("--state <state>", "Filter by state", CAMPAIGN_STATES))
+    .addOption(choiceOption("--type <type>", "Campaign type", CAMPAIGN_TYPES))
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
@@ -138,8 +139,13 @@ export function registerCampaignsCommands(
     .command("create")
     .description("Create a new campaign (created in PAUSED state)")
     .requiredOption("--name <name>", "Campaign name")
-    .requiredOption("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
-    .requiredOption("--targeting <type>", "Targeting type (MANUAL or AUTO)")
+    // Only the Sponsored Products create body is implemented; SB/SD need different payloads.
+    .addOption(
+      choiceOption("--type <type>", "Campaign type", ["sponsoredProducts"]).makeOptionMandatory()
+    )
+    .addOption(
+      choiceOption("--targeting <type>", "Targeting type", TARGETING_TYPES).makeOptionMandatory()
+    )
     .requiredOption("--budget <amount>", "Daily budget amount")
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .option("--profile <id>", "Profile ID")
@@ -159,7 +165,7 @@ export function registerCampaignsCommands(
           profileId,
           opts.name,
           opts.type,
-          opts.targeting.toUpperCase(),
+          opts.targeting,
           budget,
           opts.start
         );
@@ -182,7 +188,7 @@ export function registerCampaignsCommands(
     .command("archive")
     .description("Archive a campaign")
     .requiredOption("--campaign <id>", "Campaign ID")
-    .requiredOption("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
+    .addOption(choiceOption("--type <type>", "Campaign type", CAMPAIGN_TYPES).makeOptionMandatory())
     .option("--profile <id>", "Profile ID")
     .option("--confirm", "Skip confirmation prompt")
     .option("--json", "Output as JSON")
