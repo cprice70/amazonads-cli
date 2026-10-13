@@ -1,13 +1,7 @@
 import { Command } from "commander";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
-import {
-  printTable,
-  printJson,
-  printSuccess,
-  printError,
-  colorState,
-  formatCurrency,
-} from "../output.js";
+import { printTable, printJson, printSuccess, colorState, formatCurrency } from "../output.js";
+import { runAction, fail } from "../run-action.js";
 
 interface Keyword {
   keywordId?: string | number;
@@ -44,8 +38,8 @@ export function registerKeywordsCommands(
     .option("--campaign <id>", "Filter by campaign ID")
     .option("--ad-group <id>", "Filter by ad group ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const data = await client.getKeywords(profileId, opts.campaign, opts.adGroup);
 
@@ -60,7 +54,15 @@ export function registerKeywordsCommands(
           return;
         }
 
-        const headers = ["Keyword ID", "Keyword", "Match Type", "State", "Bid", "Campaign ID", "Ad Group ID"];
+        const headers = [
+          "Keyword ID",
+          "Keyword",
+          "Match Type",
+          "State",
+          "Bid",
+          "Campaign ID",
+          "Ad Group ID",
+        ];
         const rows = list.map((k) => [
           String(k.keywordId || ""),
           k.keywordText || "",
@@ -72,11 +74,8 @@ export function registerKeywordsCommands(
         ]);
 
         printTable(headers, rows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   keywords
     .command("update-bid")
@@ -85,15 +84,13 @@ export function registerKeywordsCommands(
     .requiredOption("--bid <amount>", "New bid amount")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const bid = parseFloat(opts.bid);
 
         if (isNaN(bid) || bid <= 0) {
-          printError("Bid must be a positive number.");
-          process.exit(1);
-          return;
+          fail("Bid must be a positive number.");
         }
 
         const data = await client.updateKeywordBid(profileId, opts.keyword, bid);
@@ -103,9 +100,6 @@ export function registerKeywordsCommands(
         } else {
           printSuccess(`Keyword ${opts.keyword} bid updated to ${formatCurrency(bid)}.`);
         }
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

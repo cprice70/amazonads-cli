@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 import { AmazonAdsClient } from "./amazon-ads-client.js";
-import { printError } from "./output.js";
+import { fail } from "./run-action.js";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerProfilesCommands } from "./commands/profiles.js";
 import { registerCampaignsCommands } from "./commands/campaigns.js";
@@ -30,19 +30,15 @@ function resolveProfileId(opts: { profile?: string }): string {
   const profileId = opts.profile ?? config.defaultProfileId;
 
   if (!profileId) {
-    printError(
+    fail(
       "Profile ID is required. Use --profile <id>, set AMAZON_ADS_PROFILE_ID, or set defaultProfileId in config."
     );
-    process.exit(1);
   }
 
   return profileId;
 }
 
-program
-  .name("amazonads")
-  .description("Amazon Ads CLI")
-  .version(version);
+program.name("amazonads").description("Amazon Ads CLI").version(version);
 
 registerAuthCommands(program);
 registerProfilesCommands(program, client);

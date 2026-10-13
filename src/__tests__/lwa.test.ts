@@ -73,7 +73,10 @@ describe("parseCallback", () => {
   });
 
   it("surfaces the provider's error before checking anything else", () => {
-    const params = new URLSearchParams({ error: "access_denied", error_description: "User said no" });
+    const params = new URLSearchParams({
+      error: "access_denied",
+      error_description: "User said no",
+    });
     expect(() => parseCallback(params, "s1")).toThrow(/access_denied.*User said no/);
   });
 

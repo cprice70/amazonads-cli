@@ -69,6 +69,7 @@ describe("reports commands", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.exitCode = undefined;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -81,9 +82,18 @@ describe("reports commands", () => {
     registerReportsCommands(program, client, resolveProfileId);
 
     await program.parseAsync([
-      "node", "cli", "reports", "create",
-      "--type", "search-term", "--start", "2026-09-01", "--end", "2026-09-30",
-      "--no-wait", "--json",
+      "node",
+      "cli",
+      "reports",
+      "create",
+      "--type",
+      "search-term",
+      "--start",
+      "2026-09-01",
+      "--end",
+      "2026-09-30",
+      "--no-wait",
+      "--json",
     ]);
 
     expect(client.createReport).toHaveBeenCalledWith(
@@ -91,7 +101,9 @@ describe("reports commands", () => {
       expect.objectContaining({ reportTypeId: "spSearchTerm", startDate: "2026-09-01" })
     );
     expect(client.waitForReport).not.toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ reportId: "r-1", status: "PENDING" }, null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ reportId: "r-1", status: "PENDING" }, null, 2)
+    );
   });
 
   it("reports create waits and writes CSV to --out", async () => {
@@ -108,9 +120,18 @@ describe("reports commands", () => {
     registerReportsCommands(program, client, resolveProfileId);
 
     await program.parseAsync([
-      "node", "cli", "reports", "create",
-      "--type", "campaign", "--start", "2026-09-01", "--end", "2026-09-30",
-      "--out", out,
+      "node",
+      "cli",
+      "reports",
+      "create",
+      "--type",
+      "campaign",
+      "--start",
+      "2026-09-01",
+      "--end",
+      "2026-09-30",
+      "--out",
+      out,
     ]);
 
     expect(readFileSync(out, "utf-8")).toBe("campaignName,clicks\nA,3\nB,5\n");
@@ -123,12 +144,20 @@ describe("reports commands", () => {
     registerReportsCommands(program, client, resolveProfileId);
 
     await program.parseAsync([
-      "node", "cli", "reports", "create",
-      "--type", "bogus", "--start", "2026-09-01", "--end", "2026-09-30",
+      "node",
+      "cli",
+      "reports",
+      "create",
+      "--type",
+      "bogus",
+      "--start",
+      "2026-09-01",
+      "--end",
+      "2026-09-30",
     ]);
 
     expect(client.createReport).not.toHaveBeenCalled();
-    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it("reports get --out writes completed rows as JSON when the name ends in .json", async () => {
@@ -145,6 +174,8 @@ describe("reports commands", () => {
 
     await program.parseAsync(["node", "cli", "reports", "get", "--report", "r-3", "--out", out]);
 
-    expect(JSON.parse(readFileSync(out, "utf-8"))).toEqual([{ searchTerm: "ghost decor", clicks: 2 }]);
+    expect(JSON.parse(readFileSync(out, "utf-8"))).toEqual([
+      { searchTerm: "ghost decor", clicks: 2 },
+    ]);
   });
 });
