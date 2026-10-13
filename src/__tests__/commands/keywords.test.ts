@@ -16,12 +16,10 @@ function resolveProfileId(_opts: { profile?: string }) {
 
 describe("keywords commands", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
-  let processExitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    processExitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
   });
 
   afterEach(() => {

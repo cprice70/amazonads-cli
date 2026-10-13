@@ -192,7 +192,8 @@ export class AmazonAdsClient {
           throw new Error(
             `Amazon Ads API request failed after ${attempt + 1} attempts: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
+            { cause: err }
           );
         }
         await this.sleep(this.backoffMs(attempt));
@@ -235,7 +236,7 @@ export class AmazonAdsClient {
     key: string
   ): Promise<unknown> {
     const items: unknown[] = [];
-    let merged: Record<string, unknown> = {};
+    let merged: Record<string, unknown>;
     let nextToken: string | undefined;
 
     do {

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
 import { printTable, printJson } from "../output.js";
-import { runAction, fail } from "../run-action.js";
+import { runAction } from "../run-action.js";
 
 interface Profile {
   profileId: number | string;
