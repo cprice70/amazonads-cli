@@ -63,6 +63,27 @@ describe("campaigns commands", () => {
     expect(consoleSpy).toHaveBeenCalledWith("No campaigns found.");
   });
 
+  it("campaigns performance computes ACoS from cost and 7-day sales", async () => {
+    const client = makeClient();
+    (client.getCampaignPerformance as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { campaignId: "7", campaignName: "Perf", impressions: 1000, clicks: 50, cost: 25, sales7d: 100 },
+    ]);
+
+    const program = new Command();
+    program.exitOverride();
+    registerCampaignsCommands(program, client, resolveProfileId);
+
+    await program.parseAsync([
+      "node", "cli", "campaigns", "performance",
+      "--campaign", "7", "--start", "2026-10-01", "--end", "2026-10-10",
+    ]);
+
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain("$25.00");
+    expect(output).toContain("$100.00");
+    expect(output).toContain("25.0%");
+  });
+
   it("campaigns list renders table for campaign data", async () => {
     const client = makeClient();
     (client.getCampaigns as ReturnType<typeof vi.fn>).mockResolvedValue({

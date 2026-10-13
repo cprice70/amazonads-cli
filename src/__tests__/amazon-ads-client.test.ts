@@ -158,6 +158,37 @@ describe("AmazonAdsClient.getCampaignPerformance", () => {
     expect(rows).toEqual([{ campaignId: 222, campaignName: "B" }]);
   });
 
+  it("requests the campaign preset with 7-day attribution", async () => {
+    mockCompletedReport([]);
+
+    await makeClient().getCampaignPerformance("p", "1", "2026-10-01", "2026-10-10");
+
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(body.configuration.reportTypeId).toBe("spCampaigns");
+    expect(body.configuration.timeUnit).toBe("SUMMARY");
+    expect(body.configuration.columns).toContain("sales7d");
+    expect(body.configuration.columns).not.toContain("sales14d");
+  });
+
+  it("keeps polling past five seconds until the report completes", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { reportId: "r1" }));
+    for (let i = 0; i < 6; i++) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: "PENDING" }));
+    }
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { status: "COMPLETED", url: "https://example.com/r1.gz" }))
+      .mockResolvedValueOnce(gzipResponse([{ campaignId: 1 }]));
+
+    const pending = makeClient().getCampaignPerformance("p", "1", "2026-10-01", "2026-10-10");
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual([{ campaignId: 1 }]);
+    vi.useRealTimers();
+  });
+
   it("returns an empty list, not every campaign, when the campaign has no rows", async () => {
     mockCompletedReport([
       { campaignId: 111, campaignName: "A" },

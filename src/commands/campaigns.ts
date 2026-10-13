@@ -81,46 +81,40 @@ export function registerCampaignsCommands(
 
   campaigns
     .command("performance")
-    .description("Get campaign performance report")
+    .description("Get campaign performance (7-day attribution); waits for Amazon to build the report")
     .requiredOption("--campaign <id>", "Campaign ID")
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .requiredOption("--end <date>", "End date (YYYY-MM-DD)")
+    .option("--timeout <seconds>", "Max seconds to wait for the report", "600")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
         const profileId = resolveProfileId(opts);
+        const timeoutMs = Math.max(1, parseInt(opts.timeout, 10) || 600) * 1000;
+        if (!opts.json) printWarning("Waiting for Amazon to generate the report...");
         const data = await client.getCampaignPerformance(
           profileId,
           opts.campaign,
           opts.start,
-          opts.end
+          opts.end,
+          { timeoutMs }
         );
-
-        const result = data as Record<string, unknown>;
-
-        if (result.status === "PENDING") {
-          printWarning(`Report still processing. Report ID: ${result.reportId}`);
-          console.log(`Check status with: amazonads reports get --report ${result.reportId} --profile ${profileId}`);
-          if (opts.json) printJson(data);
-          return;
-        }
 
         if (opts.json) {
           printJson(data);
           return;
         }
 
-        const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
-        if (rows.length === 0) {
+        if (data.length === 0) {
           console.log("No performance data found.");
           return;
         }
 
         const headers = ["Campaign ID", "Name", "Impressions", "Clicks", "Spend", "Sales", "ACOS"];
-        const tableRows = rows.map((r) => {
-          const spend = typeof r.spend === "number" ? r.spend : parseFloat(String(r.spend || 0));
-          const sales = typeof r.sales14d === "number" ? r.sales14d : parseFloat(String(r.sales14d || 0));
+        const tableRows = data.map((r) => {
+          const spend = typeof r.cost === "number" ? r.cost : parseFloat(String(r.cost || 0));
+          const sales = typeof r.sales7d === "number" ? r.sales7d : parseFloat(String(r.sales7d || 0));
           const acos = sales > 0 ? ((spend / sales) * 100).toFixed(1) + "%" : "N/A";
           return [
             String(r.campaignId || ""),
