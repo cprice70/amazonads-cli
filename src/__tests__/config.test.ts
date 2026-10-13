@@ -70,6 +70,24 @@ describe("config", () => {
     expect(config.region).toBe("EU");
   });
 
+  it("saveConfig writes the file and its directory readable only by the owner", () => {
+    saveConfig({ clientSecret: "secret" });
+
+    const fileMode = fs.statSync(getConfigPath()).mode & 0o777;
+    const dirMode = fs.statSync(path.dirname(getConfigPath())).mode & 0o777;
+    expect(fileMode).toBe(0o600);
+    expect(dirMode).toBe(0o700);
+  });
+
+  it("saveConfig tightens permissions on an existing world-readable file", () => {
+    saveConfig({ clientSecret: "secret" });
+    fs.chmodSync(getConfigPath(), 0o644);
+
+    saveConfig({ clientSecret: "rotated" });
+
+    expect(fs.statSync(getConfigPath()).mode & 0o777).toBe(0o600);
+  });
+
   it("deleteConfig removes the config file", () => {
     saveConfig({ clientId: "test" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
