@@ -225,6 +225,42 @@ export class AmazonAdsClient {
     throw lastError || new Error("Request failed after retries");
   }
 
+  /**
+   * POST a v3/v4 list endpoint and follow `nextToken` until every page has
+   * been fetched. Pages are merged under `key` so callers see one response.
+   */
+  private async listAll(
+    path: string,
+    profileId: string,
+    body: Record<string, unknown>,
+    contentType: string,
+    key: string
+  ): Promise<unknown> {
+    const items: unknown[] = [];
+    let merged: Record<string, unknown> = {};
+    let nextToken: string | undefined;
+
+    do {
+      const page = (await this.makeRequest(
+        "POST",
+        path,
+        profileId,
+        nextToken ? { ...body, nextToken } : body,
+        contentType
+      )) as Record<string, unknown> | unknown[];
+
+      // Older endpoints answer with a bare array and no paging.
+      if (Array.isArray(page)) return page;
+
+      const { nextToken: token, ...rest } = page;
+      merged = rest;
+      if (Array.isArray(page[key])) items.push(...(page[key] as unknown[]));
+      nextToken = typeof token === "string" && token ? token : undefined;
+    } while (nextToken);
+
+    return { ...merged, [key]: items };
+  }
+
   async getProfiles(): Promise<unknown> {
     return this.makeRequest("GET", "/v2/profiles");
   }
@@ -252,7 +288,7 @@ export class AmazonAdsClient {
       body.stateFilter = { include: [state.toUpperCase()] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "campaigns");
   }
 
   async getCampaignPerformance(
@@ -423,7 +459,7 @@ export class AmazonAdsClient {
 
   async getPortfolios(profileId: string): Promise<unknown> {
     const contentType = "application/vnd.spPortfolio.v3+json";
-    return this.makeRequest("POST", "/portfolios/list", profileId, {}, contentType);
+    return this.listAll("/portfolios/list", profileId, {}, contentType, "portfolios");
   }
 
   private async downloadReport(url: string): Promise<unknown> {
@@ -486,7 +522,7 @@ export class AmazonAdsClient {
       body.adGroupIdFilter = { include: [adGroupId] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "keywords");
   }
 
   async updateKeywordBid(
@@ -562,7 +598,7 @@ export class AmazonAdsClient {
       body.adGroupIdFilter = { include: [adGroupId] };
     }
 
-    return this.makeRequest("POST", path, profileId, body, contentType);
+    return this.listAll(path, profileId, body, contentType, "productAds");
   }
 
   async archiveCampaign(

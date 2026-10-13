@@ -169,3 +169,66 @@ describe("AmazonAdsClient.getCampaignPerformance", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("AmazonAdsClient list pagination", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function requestBody(callIndex: number): Record<string, unknown> {
+    return JSON.parse(fetchMock.mock.calls[callIndex][1].body as string);
+  }
+
+  it("follows nextToken until every campaign page is fetched", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(200, { campaigns: [{ campaignId: "1" }], totalResults: 2, nextToken: "page2" })
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { campaigns: [{ campaignId: "2" }], totalResults: 2 }));
+
+    const result = await makeClient().getCampaigns("p", "enabled");
+
+    expect(result).toEqual({
+      campaigns: [{ campaignId: "1" }, { campaignId: "2" }],
+      totalResults: 2,
+    });
+    expect(requestBody(1)).toEqual({ stateFilter: { include: ["ENABLED"] } });
+    expect(requestBody(2)).toEqual({ stateFilter: { include: ["ENABLED"] }, nextToken: "page2" });
+  });
+
+  it("makes a single request when the first page has no nextToken", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { keywords: [{ keywordId: "k1" }], totalResults: 1 }));
+
+    const result = await makeClient().getKeywords("p", "c1");
+
+    expect(result).toEqual({ keywords: [{ keywordId: "k1" }], totalResults: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestBody(1)).toEqual({ campaignIdFilter: { include: ["c1"] } });
+  });
+
+  it("paginates product ads and portfolios too", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a1" }], nextToken: "n" }))
+      .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a2" }] }))
+      .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 1 }], nextToken: "n" }))
+      .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 2 }] }));
+
+    const client = makeClient();
+    const ads = await client.getProductAds("p");
+    const portfolios = await client.getPortfolios("p");
+
+    expect(ads).toEqual({ productAds: [{ adId: "a1" }, { adId: "a2" }] });
+    expect(portfolios).toEqual({ portfolios: [{ portfolioId: 1 }, { portfolioId: 2 }] });
+  });
+});
