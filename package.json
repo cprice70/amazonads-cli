@@ -4,6 +4,9 @@
   "description": "CLI for Amazon Ads API",
   "author": "Chris Price",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cprice70/amazonads-cli.git"
@@ -31,8 +34,13 @@
     "start": "node build/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.test.json",
     "format": "prettier --write .",
-    "clean": "rm -rf build coverage"
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
+    "clean": "rm -rf build coverage",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "chalk": "^5.4.1",
@@ -42,10 +50,13 @@
     "open": "^10.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.14.0",
+    "eslint": "^10.12.0",
     "prettier": "^3.3.0",
     "tsx": "^4.18.0",
     "typescript": "^5.6.0",
+    "typescript-eslint": "^8.71.2",
     "vitest": "^2.1.0"
   }
 }
