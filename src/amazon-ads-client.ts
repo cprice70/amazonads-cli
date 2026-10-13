@@ -66,16 +66,9 @@ export class AmazonAdsClient {
   private accessToken?: string;
   private tokenExpiry?: number;
 
-  constructor(overrides?: Partial<AmazonAdsConfig>) {
-    // Load configuration from environment variables, then apply overrides
-    this.config = {
-      clientId: process.env.AMAZON_ADS_CLIENT_ID,
-      clientSecret: process.env.AMAZON_ADS_CLIENT_SECRET,
-      refreshToken: process.env.AMAZON_ADS_REFRESH_TOKEN,
-      region: process.env.AMAZON_ADS_REGION || "NA",
-      sandbox: process.env.AMAZON_ADS_SANDBOX === "true",
-      ...overrides,
-    };
+  /** Config comes fully resolved from loadConfig(); the client never reads process.env itself. */
+  constructor(config: AmazonAdsConfig = {}) {
+    this.config = { region: "NA", sandbox: false, ...config };
   }
 
   private getEndpoint(): string {
@@ -132,13 +125,18 @@ export class AmazonAdsClient {
       throw new Error(`Failed to refresh access token: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { access_token: string; expires_in: number };
     this.accessToken = data.access_token;
     this.tokenExpiry = Date.now() + (data.expires_in - 60) * 1000; // Refresh 1 minute before expiry
   }
 
   private async sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** Exponential backoff: 1s, 2s, 4s, ... */
+  private backoffMs(attempt: number): number {
+    return Math.pow(2, attempt) * 1000;
   }
 
   private isRetryableError(status: number): boolean {
@@ -183,19 +181,29 @@ export class AmazonAdsClient {
       options.body = JSON.stringify(body);
     }
 
-    // Retry logic with exponential backoff
+    // Retry on 429/5xx and on connection failures, with exponential backoff.
     const maxRetries = 3;
-    let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const response = await fetch(url, options);
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, options);
+      } catch (err) {
+        if (attempt >= maxRetries) {
+          throw new Error(
+            `Amazon Ads API request failed after ${attempt + 1} attempts: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+        await this.sleep(this.backoffMs(attempt));
+        continue;
+      }
 
       if (response.ok) {
-        // Handle empty responses (like DELETE)
+        // Some endpoints answer with no body (e.g. 204).
         const text = await response.text();
-        if (!text) {
-          return { success: true, campaignId: path.split("/").pop() };
-        }
+        if (!text) return { success: true };
         const parsed: unknown = JSON.parse(text);
         // Batch endpoints answer 207 Multi-Status and report per-item failures
         // in the body, so an OK status alone does not mean the write succeeded.
@@ -205,24 +213,15 @@ export class AmazonAdsClient {
 
       const errorText = await response.text();
 
-      // Check if we should retry
       if (this.isRetryableError(response.status) && attempt < maxRetries) {
-        // Exponential backoff: 1s, 2s, 4s
-        const delay = Math.pow(2, attempt) * 1000;
-
-        // Check for Retry-After header
         const retryAfter = response.headers.get("Retry-After");
-        const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
-
+        const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.backoffMs(attempt);
         await this.sleep(Math.min(waitTime, 10000)); // Cap at 10 seconds
         continue;
       }
 
-      lastError = new Error(`Amazon Ads API error (${response.status}): ${errorText}`);
-      break;
+      throw new Error(`Amazon Ads API error (${response.status}): ${errorText}`);
     }
-
-    throw lastError || new Error("Request failed after retries");
   }
 
   /**

@@ -232,3 +232,67 @@ describe("AmazonAdsClient list pagination", () => {
     expect(portfolios).toEqual({ portfolios: [{ portfolioId: 1 }, { portfolioId: 2 }] });
   });
 });
+
+describe("AmazonAdsClient request hardening", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    delete process.env.AMAZON_ADS_REGION;
+  });
+
+  it("retries a request whose connection failed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(jsonResponse(200, [{ profileId: 1 }]));
+
+    const pending = makeClient().getProfiles();
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual([{ profileId: 1 }]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after the retry budget and reports the connection error", async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse());
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const pending = makeClient().getProfiles();
+    const outcome = pending.catch((e: Error) => e);
+    await vi.runAllTimersAsync();
+
+    await expect(outcome).resolves.toMatchObject({ message: expect.stringMatching(/fetch failed/) });
+    expect(fetchMock).toHaveBeenCalledTimes(1 + 4);
+  });
+
+  it("reports a bare success for an empty response body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(makeClient().archiveCampaign("p", "c1", "sponsoredProducts")).resolves.toEqual({
+      success: true,
+    });
+  });
+
+  it("uses only the config it was given, not process.env", async () => {
+    process.env.AMAZON_ADS_REGION = "EU";
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse(200, []));
+
+    await new AmazonAdsClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      refreshToken: "refresh-token",
+    }).getProfiles();
+
+    expect(fetchMock.mock.calls[1][0]).toBe("https://advertising-api.amazon.com/v2/profiles");
+  });
+});
