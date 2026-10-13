@@ -34,11 +34,40 @@ export function getTokenUrl(region: Region): string {
   return `${TOKEN_HOSTS[region]}/auth/o2/token`;
 }
 
-export function buildConsentUrl(region: Region, clientId: string, redirectUri: string): URL {
+export function buildConsentUrl(
+  region: Region,
+  clientId: string,
+  redirectUri: string,
+  state?: string
+): URL {
   const url = new URL("/ap/oa", CONSENT_HOSTS[region]);
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("scope", SCOPE);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", redirectUri);
+  if (state) url.searchParams.set("state", state);
   return url;
+}
+
+/**
+ * Validate the query string Login with Amazon sends to the redirect URI and
+ * return the authorization code. The `state` echo must match what we sent so
+ * a request forged by another page cannot hand us its code.
+ */
+export function parseCallback(params: URLSearchParams, expectedState: string): string {
+  const error = params.get("error");
+  if (error) {
+    const description = params.get("error_description");
+    throw new Error(description ? `${error}: ${description}` : error);
+  }
+
+  if (params.get("state") !== expectedState) {
+    throw new Error("Callback state did not match the login request; ignoring it.");
+  }
+
+  const code = params.get("code");
+  if (!code) {
+    throw new Error("No authorization code received.");
+  }
+  return code;
 }

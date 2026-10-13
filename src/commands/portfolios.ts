@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
-import { printTable, printJson, printError, colorState, formatCurrency } from "../output.js";
+import { printTable, printJson, colorState, formatCurrency } from "../output.js";
+import { runAction } from "../run-action.js";
 
 interface Portfolio {
   portfolioId: number | string;
@@ -22,8 +23,8 @@ export function registerPortfoliosCommands(
     .description("List portfolios")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const data = await client.getPortfolios(profileId);
 
@@ -50,9 +51,6 @@ export function registerPortfoliosCommands(
             p.budget?.policy || "",
           ])
         );
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

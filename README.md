@@ -51,14 +51,14 @@ You can also create the config file manually if you already have a refresh token
 }
 ```
 
-| Field | Values | Notes |
-|---|---|---|
-| `clientId` | `amzn1.application-oa2-client.xxx` | From Amazon Ads API console |
-| `clientSecret` | string | From Amazon Ads API console |
-| `refreshToken` | `Atzr\|xxx` | Obtained via `auth login` or existing token |
-| `region` | `NA`, `EU`, `FE` | North America, Europe, Far East |
-| `sandbox` | `true` / `false` | Use the Amazon Ads test endpoint |
-| `defaultProfileId` | numeric string | Avoids needing `--profile` on every command |
+| Field              | Values                             | Notes                                       |
+| ------------------ | ---------------------------------- | ------------------------------------------- |
+| `clientId`         | `amzn1.application-oa2-client.xxx` | From Amazon Ads API console                 |
+| `clientSecret`     | string                             | From Amazon Ads API console                 |
+| `refreshToken`     | `Atzr\|xxx`                        | Obtained via `auth login` or existing token |
+| `region`           | `NA`, `EU`, `FE`                   | North America, Europe, Far East             |
+| `sandbox`          | `true` / `false`                   | Use the Amazon Ads test endpoint            |
+| `defaultProfileId` | numeric string                     | Avoids needing `--profile` on every command |
 
 Environment variables override the config file: `AMAZON_ADS_CLIENT_ID`, `AMAZON_ADS_CLIENT_SECRET`, `AMAZON_ADS_REFRESH_TOKEN`, `AMAZON_ADS_REGION`, `AMAZON_ADS_SANDBOX`, `AMAZON_ADS_PROFILE_ID`.
 
@@ -90,10 +90,10 @@ amazonads campaigns list --profile <id> --state enabled
 amazonads campaigns list --profile <id> --type sponsoredBrands
 amazonads campaigns list --profile <id> --json
 
-# Campaign performance report (async — may return a report ID if still processing)
+# Campaign performance (7-day attribution; waits for Amazon to build the report, --timeout <seconds> caps it)
 amazonads campaigns performance --profile <id> --campaign <id> --start 2024-01-01 --end 2024-01-31
 
-# Create a campaign (always created in PAUSED state)
+# Create a Sponsored Products campaign (always created in PAUSED state; --type sponsoredProducts only)
 amazonads campaigns create \
   --profile <id> \
   --name "My Campaign" \
@@ -166,6 +166,8 @@ npm run dev         # Run without building (hot-reloads on save)
 npm run build       # Compile TypeScript
 npm run watch       # Watch mode (compile only)
 npm run test        # Run tests
+npm run check       # Lint, format check, typecheck (including tests), and tests — what CI runs
+npm run format      # Format with prettier
 ```
 
 Pass CLI arguments after `--` when using `dev`:
@@ -174,7 +176,7 @@ Pass CLI arguments after `--` when using `dev`:
 npm run dev -- campaigns list --profile 1234567890
 ```
 
-Requires Node.js 18+.
+Requires Node.js 20+.
 
 ## Releasing
 

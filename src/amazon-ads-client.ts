@@ -1,6 +1,7 @@
 import zlib from "zlib";
 import { promisify } from "util";
 import { getTokenUrl, normalizeRegion } from "./lwa.js";
+import { buildReportSpec } from "./report-presets.js";
 
 const gunzip = promisify(zlib.gunzip);
 
@@ -55,9 +56,7 @@ function throwIfItemsRejected(body: unknown): void {
       })
       .join("\n");
 
-    throw new Error(
-      `Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`
-    );
+    throw new Error(`Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`);
   }
 }
 
@@ -66,16 +65,9 @@ export class AmazonAdsClient {
   private accessToken?: string;
   private tokenExpiry?: number;
 
-  constructor(overrides?: Partial<AmazonAdsConfig>) {
-    // Load configuration from environment variables, then apply overrides
-    this.config = {
-      clientId: process.env.AMAZON_ADS_CLIENT_ID,
-      clientSecret: process.env.AMAZON_ADS_CLIENT_SECRET,
-      refreshToken: process.env.AMAZON_ADS_REFRESH_TOKEN,
-      region: process.env.AMAZON_ADS_REGION || "NA",
-      sandbox: process.env.AMAZON_ADS_SANDBOX === "true",
-      ...overrides,
-    };
+  /** Config comes fully resolved from loadConfig(); the client never reads process.env itself. */
+  constructor(config: AmazonAdsConfig = {}) {
+    this.config = { region: "NA", sandbox: false, ...config };
   }
 
   private getEndpoint(): string {
@@ -132,13 +124,18 @@ export class AmazonAdsClient {
       throw new Error(`Failed to refresh access token: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { access_token: string; expires_in: number };
     this.accessToken = data.access_token;
     this.tokenExpiry = Date.now() + (data.expires_in - 60) * 1000; // Refresh 1 minute before expiry
   }
 
   private async sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** Exponential backoff: 1s, 2s, 4s, ... */
+  private backoffMs(attempt: number): number {
+    return Math.pow(2, attempt) * 1000;
   }
 
   private isRetryableError(status: number): boolean {
@@ -158,7 +155,7 @@ export class AmazonAdsClient {
     const url = `${this.getEndpoint()}${path}`;
     const ct = contentType || "application/json";
     const headers: Record<string, string> = {
-      "Authorization": `Bearer ${this.accessToken}`,
+      Authorization: `Bearer ${this.accessToken}`,
       "Amazon-Advertising-API-ClientId": this.config.clientId!,
     };
 
@@ -183,19 +180,30 @@ export class AmazonAdsClient {
       options.body = JSON.stringify(body);
     }
 
-    // Retry logic with exponential backoff
+    // Retry on 429/5xx and on connection failures, with exponential backoff.
     const maxRetries = 3;
-    let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const response = await fetch(url, options);
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, options);
+      } catch (err) {
+        if (attempt >= maxRetries) {
+          throw new Error(
+            `Amazon Ads API request failed after ${attempt + 1} attempts: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err }
+          );
+        }
+        await this.sleep(this.backoffMs(attempt));
+        continue;
+      }
 
       if (response.ok) {
-        // Handle empty responses (like DELETE)
+        // Some endpoints answer with no body (e.g. 204).
         const text = await response.text();
-        if (!text) {
-          return { success: true, campaignId: path.split("/").pop() };
-        }
+        if (!text) return { success: true };
         const parsed: unknown = JSON.parse(text);
         // Batch endpoints answer 207 Multi-Status and report per-item failures
         // in the body, so an OK status alone does not mean the write succeeded.
@@ -205,24 +213,15 @@ export class AmazonAdsClient {
 
       const errorText = await response.text();
 
-      // Check if we should retry
       if (this.isRetryableError(response.status) && attempt < maxRetries) {
-        // Exponential backoff: 1s, 2s, 4s
-        const delay = Math.pow(2, attempt) * 1000;
-
-        // Check for Retry-After header
         const retryAfter = response.headers.get("Retry-After");
-        const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
-
+        const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.backoffMs(attempt);
         await this.sleep(Math.min(waitTime, 10000)); // Cap at 10 seconds
         continue;
       }
 
-      lastError = new Error(`Amazon Ads API error (${response.status}): ${errorText}`);
-      break;
+      throw new Error(`Amazon Ads API error (${response.status}): ${errorText}`);
     }
-
-    throw lastError || new Error("Request failed after retries");
   }
 
   /**
@@ -237,7 +236,7 @@ export class AmazonAdsClient {
     key: string
   ): Promise<unknown> {
     const items: unknown[] = [];
-    let merged: Record<string, unknown> = {};
+    let merged: Record<string, unknown>;
     let nextToken: string | undefined;
 
     do {
@@ -265,11 +264,7 @@ export class AmazonAdsClient {
     return this.makeRequest("GET", "/v2/profiles");
   }
 
-  async getCampaigns(
-    profileId: string,
-    state?: string,
-    campaignType?: string
-  ): Promise<unknown> {
+  async getCampaigns(profileId: string, state?: string, campaignType?: string): Promise<unknown> {
     // v3 API uses POST with filters in body
     let path = "/sp/campaigns/list";
     let contentType = "application/vnd.spcampaign.v3+json";
@@ -291,103 +286,35 @@ export class AmazonAdsClient {
     return this.listAll(path, profileId, body, contentType, "campaigns");
   }
 
+  /**
+   * Performance rows for one campaign over a date range. Builds the standard
+   * campaign report (7-day attribution) and waits for Amazon to generate it.
+   */
   async getCampaignPerformance(
     profileId: string,
     campaignId: string,
     startDate: string,
-    endDate: string
-  ): Promise<unknown> {
-    // v3 reporting API - create async report
-    const contentType = "application/vnd.createasyncreportrequest.v3+json";
+    endDate: string,
+    options: { timeoutMs?: number } = {}
+  ): Promise<Record<string, unknown>[]> {
+    const spec = buildReportSpec("campaign", startDate, endDate, false);
+    spec.name = `Campaign ${campaignId} Performance Report`;
 
-    const reportBody = {
-      name: `Campaign ${campaignId} Performance Report`,
-      startDate,
-      endDate,
-      configuration: {
-        adProduct: "SPONSORED_PRODUCTS",
-        groupBy: ["campaign"],
-        columns: [
-          "campaignId",
-          "campaignName",
-          "impressions",
-          "clicks",
-          "cost",
-          "spend",
-          "sales14d",
-          "purchases14d",
-          "unitsSoldClicks14d",
-          "clickThroughRate",
-          "costPerClick",
-        ],
-        reportTypeId: "spCampaigns",
-        timeUnit: "SUMMARY",
-        format: "GZIP_JSON",
-      },
-    };
+    const { reportId } = await this.createReport(profileId, spec);
+    const rows = (await this.waitForReport(profileId, reportId, options)) as Record<
+      string,
+      unknown
+    >[];
 
-    // Step 1: Create the report
-    const createResponse = await this.makeRequest(
-      "POST",
-      "/reporting/reports",
-      profileId,
-      reportBody,
-      contentType
-    ) as { reportId: string };
-
-    const reportId = createResponse.reportId;
-
-    // Step 2: Poll until report is ready (max 5 seconds)
-    const maxAttempts = 5;
-    const pollInterval = 1000; // 1 second
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const statusResponse = await this.makeRequest(
-        "GET",
-        `/reporting/reports/${reportId}`,
-        profileId
-      ) as { status: string; url?: string };
-
-      if (statusResponse.status === "COMPLETED" && statusResponse.url) {
-        // Step 3: Download and decompress the report
-        const reportData = await this.downloadReport(statusResponse.url);
-
-        // Filter to the requested campaign. An empty result is correct here;
-        // never fall back to the whole account's rows.
-        if (campaignId && Array.isArray(reportData)) {
-          return reportData.filter(
-            (row: Record<string, unknown>) => String(row.campaignId) === campaignId
-          );
-        }
-
-        return reportData;
-      }
-
-      if (statusResponse.status === "FAILURE") {
-        throw new Error(`Report generation failed for reportId: ${reportId}`);
-      }
-
-      // Wait before next poll
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
-
-    // Return pending status with reportId so user can check later
-    return {
-      status: "PENDING",
-      message: `Report still processing after ${maxAttempts * pollInterval / 1000} seconds`,
-      reportId,
-      checkUrl: `/reporting/reports/${reportId}`,
-    };
+    // An empty result is correct here; never fall back to the whole account's rows.
+    return rows.filter((row) => String(row.campaignId) === campaignId);
   }
 
   /**
    * Create an async v3 report. Returns the reportId; poll with getReport()
    * or waitForReport().
    */
-  async createReport(
-    profileId: string,
-    spec: ReportSpec
-  ): Promise<{ reportId: string }> {
+  async createReport(profileId: string, spec: ReportSpec): Promise<{ reportId: string }> {
     const contentType = "application/vnd.createasyncreportrequest.v3+json";
     const body = {
       name: spec.name,
@@ -404,13 +331,9 @@ export class AmazonAdsClient {
       },
     };
 
-    return this.makeRequest(
-      "POST",
-      "/reporting/reports",
-      profileId,
-      body,
-      contentType
-    ) as Promise<{ reportId: string }>;
+    return this.makeRequest("POST", "/reporting/reports", profileId, body, contentType) as Promise<{
+      reportId: string;
+    }>;
   }
 
   /**
@@ -475,11 +398,11 @@ export class AmazonAdsClient {
   }
 
   async getReport(profileId: string, reportId: string): Promise<unknown> {
-    const statusResponse = await this.makeRequest(
+    const statusResponse = (await this.makeRequest(
       "GET",
       `/reporting/reports/${reportId}`,
       profileId
-    ) as { status: string; url?: string; failureReason?: string };
+    )) as { status: string; url?: string; failureReason?: string };
 
     if (statusResponse.status === "COMPLETED" && statusResponse.url) {
       const reportData = await this.downloadReport(statusResponse.url);
@@ -504,11 +427,7 @@ export class AmazonAdsClient {
     };
   }
 
-  async getKeywords(
-    profileId: string,
-    campaignId?: string,
-    adGroupId?: string
-  ): Promise<unknown> {
+  async getKeywords(profileId: string, campaignId?: string, adGroupId?: string): Promise<unknown> {
     const path = "/sp/keywords/list";
     const contentType = "application/vnd.spkeyword.v3+json";
 
@@ -525,11 +444,7 @@ export class AmazonAdsClient {
     return this.listAll(path, profileId, body, contentType, "keywords");
   }
 
-  async updateKeywordBid(
-    profileId: string,
-    keywordId: string,
-    bid: number
-  ): Promise<unknown> {
+  async updateKeywordBid(profileId: string, keywordId: string, bid: number): Promise<unknown> {
     const contentType = "application/vnd.spkeyword.v3+json";
     const body = {
       keywords: [
@@ -567,7 +482,7 @@ export class AmazonAdsClient {
         {
           name,
           targetingType,
-          state: "PAUSED",  // Default to PAUSED for safety - won't spend money
+          state: "PAUSED", // Default to PAUSED for safety - won't spend money
           budget: {
             budgetType: "DAILY",
             budget: dailyBudget,

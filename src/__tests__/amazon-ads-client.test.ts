@@ -36,9 +36,7 @@ describe("AmazonAdsClient token refresh", () => {
   });
 
   it("refreshes against the regional Login with Amazon host", async () => {
-    fetchMock
-      .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse(200, []));
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse(200, []));
 
     await makeClient("EU").getProfiles();
 
@@ -101,7 +99,9 @@ describe("AmazonAdsClient multi-status handling", () => {
           error: [
             {
               index: 0,
-              errors: [{ errorType: "DUPLICATE_VALUE", errorValue: { message: "Name already used" } }],
+              errors: [
+                { errorType: "DUPLICATE_VALUE", errorValue: { message: "Name already used" } },
+              ],
             },
           ],
         },
@@ -109,7 +109,14 @@ describe("AmazonAdsClient multi-status handling", () => {
     );
 
     await expect(
-      makeClient().createCampaign("profile-1", "Dup", "sponsoredProducts", "MANUAL", 10, "2026-10-13")
+      makeClient().createCampaign(
+        "profile-1",
+        "Dup",
+        "sponsoredProducts",
+        "MANUAL",
+        10,
+        "2026-10-13"
+      )
     ).rejects.toThrow(/DUPLICATE_VALUE/);
   });
 
@@ -158,6 +165,39 @@ describe("AmazonAdsClient.getCampaignPerformance", () => {
     expect(rows).toEqual([{ campaignId: 222, campaignName: "B" }]);
   });
 
+  it("requests the campaign preset with 7-day attribution", async () => {
+    mockCompletedReport([]);
+
+    await makeClient().getCampaignPerformance("p", "1", "2026-10-01", "2026-10-10");
+
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(body.configuration.reportTypeId).toBe("spCampaigns");
+    expect(body.configuration.timeUnit).toBe("SUMMARY");
+    expect(body.configuration.columns).toContain("sales7d");
+    expect(body.configuration.columns).not.toContain("sales14d");
+  });
+
+  it("keeps polling past five seconds until the report completes", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { reportId: "r1" }));
+    for (let i = 0; i < 6; i++) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: "PENDING" }));
+    }
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(200, { status: "COMPLETED", url: "https://example.com/r1.gz" })
+      )
+      .mockResolvedValueOnce(gzipResponse([{ campaignId: 1 }]));
+
+    const pending = makeClient().getCampaignPerformance("p", "1", "2026-10-01", "2026-10-10");
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual([{ campaignId: 1 }]);
+    vi.useRealTimers();
+  });
+
   it("returns an empty list, not every campaign, when the campaign has no rows", async () => {
     mockCompletedReport([
       { campaignId: 111, campaignName: "A" },
@@ -192,7 +232,9 @@ describe("AmazonAdsClient list pagination", () => {
       .mockResolvedValueOnce(
         jsonResponse(200, { campaigns: [{ campaignId: "1" }], totalResults: 2, nextToken: "page2" })
       )
-      .mockResolvedValueOnce(jsonResponse(200, { campaigns: [{ campaignId: "2" }], totalResults: 2 }));
+      .mockResolvedValueOnce(
+        jsonResponse(200, { campaigns: [{ campaignId: "2" }], totalResults: 2 })
+      );
 
     const result = await makeClient().getCampaigns("p", "enabled");
 
@@ -207,7 +249,9 @@ describe("AmazonAdsClient list pagination", () => {
   it("makes a single request when the first page has no nextToken", async () => {
     fetchMock
       .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { keywords: [{ keywordId: "k1" }], totalResults: 1 }));
+      .mockResolvedValueOnce(
+        jsonResponse(200, { keywords: [{ keywordId: "k1" }], totalResults: 1 })
+      );
 
     const result = await makeClient().getKeywords("p", "c1");
 
@@ -221,7 +265,9 @@ describe("AmazonAdsClient list pagination", () => {
       .mockResolvedValueOnce(tokenResponse())
       .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a1" }], nextToken: "n" }))
       .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a2" }] }))
-      .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 1 }], nextToken: "n" }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { portfolios: [{ portfolioId: 1 }], nextToken: "n" })
+      )
       .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 2 }] }));
 
     const client = makeClient();
@@ -230,5 +276,71 @@ describe("AmazonAdsClient list pagination", () => {
 
     expect(ads).toEqual({ productAds: [{ adId: "a1" }, { adId: "a2" }] });
     expect(portfolios).toEqual({ portfolios: [{ portfolioId: 1 }, { portfolioId: 2 }] });
+  });
+});
+
+describe("AmazonAdsClient request hardening", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    delete process.env.AMAZON_ADS_REGION;
+  });
+
+  it("retries a request whose connection failed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(jsonResponse(200, [{ profileId: 1 }]));
+
+    const pending = makeClient().getProfiles();
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual([{ profileId: 1 }]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after the retry budget and reports the connection error", async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse());
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const pending = makeClient().getProfiles();
+    const outcome = pending.catch((e: Error) => e);
+    await vi.runAllTimersAsync();
+
+    await expect(outcome).resolves.toMatchObject({
+      message: expect.stringMatching(/fetch failed/),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1 + 4);
+  });
+
+  it("reports a bare success for an empty response body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(makeClient().archiveCampaign("p", "c1", "sponsoredProducts")).resolves.toEqual({
+      success: true,
+    });
+  });
+
+  it("uses only the config it was given, not process.env", async () => {
+    process.env.AMAZON_ADS_REGION = "EU";
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse(200, []));
+
+    await new AmazonAdsClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      refreshToken: "refresh-token",
+    }).getProfiles();
+
+    expect(fetchMock.mock.calls[1][0]).toBe("https://advertising-api.amazon.com/v2/profiles");
   });
 });

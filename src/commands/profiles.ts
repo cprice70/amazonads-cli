@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
-import { printTable, printJson, printError } from "../output.js";
+import { printTable, printJson } from "../output.js";
+import { runAction } from "../run-action.js";
 
 interface Profile {
   profileId: number | string;
@@ -14,16 +15,13 @@ interface Profile {
   timezone?: string;
 }
 
-export function registerProfilesCommands(
-  program: Command,
-  client: AmazonAdsClient
-): void {
+export function registerProfilesCommands(program: Command, client: AmazonAdsClient): void {
   program
     .command("profiles")
     .description("List Amazon Ads profiles")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const data = await client.getProfiles();
         const profiles = data as Profile[];
 
@@ -43,9 +41,6 @@ export function registerProfilesCommands(
         ]);
 
         printTable(headers, rows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

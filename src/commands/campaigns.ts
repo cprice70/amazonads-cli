@@ -5,11 +5,12 @@ import {
   printTable,
   printJson,
   printSuccess,
-  printError,
   printWarning,
   colorState,
   formatCurrency,
 } from "../output.js";
+import { runAction, fail } from "../run-action.js";
+import { choiceOption, CAMPAIGN_TYPES, CAMPAIGN_STATES, TARGETING_TYPES } from "../options.js";
 
 interface Campaign {
   campaignId?: string | number;
@@ -43,11 +44,11 @@ export function registerCampaignsCommands(
     .command("list")
     .description("List campaigns")
     .option("--profile <id>", "Profile ID")
-    .option("--state <state>", "Filter by state (ENABLED, PAUSED, ARCHIVED)")
-    .option("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
+    .addOption(choiceOption("--state <state>", "Filter by state", CAMPAIGN_STATES))
+    .addOption(choiceOption("--type <type>", "Campaign type", CAMPAIGN_TYPES))
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const data = await client.getCampaigns(profileId, opts.state, opts.type);
 
@@ -73,54 +74,48 @@ export function registerCampaignsCommands(
         ]);
 
         printTable(headers, rows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("performance")
-    .description("Get campaign performance report")
+    .description(
+      "Get campaign performance (7-day attribution); waits for Amazon to build the report"
+    )
     .requiredOption("--campaign <id>", "Campaign ID")
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .requiredOption("--end <date>", "End date (YYYY-MM-DD)")
+    .option("--timeout <seconds>", "Max seconds to wait for the report", "600")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
+        const timeoutMs = Math.max(1, parseInt(opts.timeout, 10) || 600) * 1000;
+        if (!opts.json) printWarning("Waiting for Amazon to generate the report...");
         const data = await client.getCampaignPerformance(
           profileId,
           opts.campaign,
           opts.start,
-          opts.end
+          opts.end,
+          { timeoutMs }
         );
-
-        const result = data as Record<string, unknown>;
-
-        if (result.status === "PENDING") {
-          printWarning(`Report still processing. Report ID: ${result.reportId}`);
-          console.log(`Check status with: amazonads reports get --report ${result.reportId} --profile ${profileId}`);
-          if (opts.json) printJson(data);
-          return;
-        }
 
         if (opts.json) {
           printJson(data);
           return;
         }
 
-        const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
-        if (rows.length === 0) {
+        if (data.length === 0) {
           console.log("No performance data found.");
           return;
         }
 
         const headers = ["Campaign ID", "Name", "Impressions", "Clicks", "Spend", "Sales", "ACOS"];
-        const tableRows = rows.map((r) => {
-          const spend = typeof r.spend === "number" ? r.spend : parseFloat(String(r.spend || 0));
-          const sales = typeof r.sales14d === "number" ? r.sales14d : parseFloat(String(r.sales14d || 0));
+        const tableRows = data.map((r) => {
+          const spend = typeof r.cost === "number" ? r.cost : parseFloat(String(r.cost || 0));
+          const sales =
+            typeof r.sales7d === "number" ? r.sales7d : parseFloat(String(r.sales7d || 0));
           const acos = sales > 0 ? ((spend / sales) * 100).toFixed(1) + "%" : "N/A";
           return [
             String(r.campaignId || ""),
@@ -134,43 +129,45 @@ export function registerCampaignsCommands(
         });
 
         printTable(headers, tableRows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("create")
     .description("Create a new campaign (created in PAUSED state)")
     .requiredOption("--name <name>", "Campaign name")
-    .requiredOption("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
-    .requiredOption("--targeting <type>", "Targeting type (MANUAL or AUTO)")
+    // Only the Sponsored Products create body is implemented; SB/SD need different payloads.
+    .addOption(
+      choiceOption("--type <type>", "Campaign type", ["sponsoredProducts"]).makeOptionMandatory()
+    )
+    .addOption(
+      choiceOption("--targeting <type>", "Targeting type", TARGETING_TYPES).makeOptionMandatory()
+    )
     .requiredOption("--budget <amount>", "Daily budget amount")
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const budget = parseFloat(opts.budget);
 
         if (isNaN(budget) || budget <= 0) {
-          printError("Budget must be a positive number.");
-          process.exit(1);
-          return;
+          fail("Budget must be a positive number.");
         }
 
         const data = await client.createCampaign(
           profileId,
           opts.name,
           opts.type,
-          opts.targeting.toUpperCase(),
+          opts.targeting,
           budget,
           opts.start
         );
 
-        printWarning("Campaign created in PAUSED state. Enable it in the Amazon Ads console when ready.");
+        printWarning(
+          "Campaign created in PAUSED state. Enable it in the Amazon Ads console when ready."
+        );
 
         if (opts.json) {
           printJson(data);
@@ -178,22 +175,19 @@ export function registerCampaignsCommands(
           printSuccess("Campaign created successfully.");
           printJson(data);
         }
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("archive")
     .description("Archive a campaign")
     .requiredOption("--campaign <id>", "Campaign ID")
-    .requiredOption("--type <type>", "Campaign type (sponsoredProducts, sponsoredBrands, sponsoredDisplay)")
+    .addOption(choiceOption("--type <type>", "Campaign type", CAMPAIGN_TYPES).makeOptionMandatory())
     .option("--profile <id>", "Profile ID")
     .option("--confirm", "Skip confirmation prompt")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
 
         if (!opts.confirm) {
@@ -221,9 +215,6 @@ export function registerCampaignsCommands(
         } else {
           printSuccess(`Campaign ${opts.campaign} archived successfully.`);
         }
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

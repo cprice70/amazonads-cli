@@ -58,12 +58,11 @@ function csvEscape(value: unknown): string {
 
 /** Flatten an array of objects to CSV. Header is the union of keys in first-seen order. */
 export function toCsv(rows: Record<string, unknown>[]): string {
-  const headers: string[] = [];
+  const seen = new Set<string>();
   for (const row of rows) {
-    for (const key of Object.keys(row)) {
-      if (!headers.includes(key)) headers.push(key);
-    }
+    for (const key of Object.keys(row)) seen.add(key);
   }
+  const headers = [...seen];
   const lines = [headers.map(csvEscape).join(",")];
   for (const row of rows) {
     lines.push(headers.map((h) => csvEscape(row[h])).join(","));

@@ -1,17 +1,49 @@
 import http from "http";
+import { randomBytes } from "crypto";
 import { URL } from "url";
 import readline from "readline/promises";
 import { Command } from "commander";
 import { loadConfig, saveConfig, deleteConfig, getConfigPath } from "../config.js";
-import { printSuccess, printError, printWarning } from "../output.js";
-import { buildConsentUrl, getTokenUrl, normalizeRegion, REGIONS } from "../lwa.js";
+import { printSuccess, printWarning } from "../output.js";
+import { runAction, fail } from "../run-action.js";
+import { buildConsentUrl, getTokenUrl, normalizeRegion, parseCallback, REGIONS } from "../lwa.js";
 
-const REDIRECT_URI = "http://localhost:3000/callback";
+const CALLBACK_PORT = 3000;
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 
 function maskSecret(value: string | undefined): string {
   if (!value) return "(not set)";
   if (value.length <= 8) return "****";
   return value.slice(0, 4) + "****" + value.slice(-4);
+}
+
+/** Escape a value for interpolation into the callback HTML page. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Turn a listen() failure into something the user can act on. */
+export function listenErrorMessage(err: unknown, port: number): string {
+  const code = (err as { code?: string })?.code;
+  if (code === "EADDRINUSE") {
+    return (
+      `Port ${port} is already in use, so the OAuth callback server cannot start. ` +
+      `Stop whatever is listening on ${port} (often a dev server) and run auth login again.`
+    );
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+function htmlPage(title: string, body: string): string {
+  return (
+    `<html><body style="font-family:Arial,sans-serif;padding:50px;text-align:center">` +
+    `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p></body></html>`
+  );
 }
 
 export function registerAuthCommands(program: Command): void {
@@ -20,141 +52,131 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("login")
     .description("Authenticate with Amazon Ads OAuth")
-    .action(async () => {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+    .action(
+      runAction(async () => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
 
-      try {
-        console.log("\nAmazon Ads CLI — OAuth Login");
-        console.log("=============================\n");
+        try {
+          console.log("\nAmazon Ads CLI — OAuth Login");
+          console.log("=============================\n");
 
-        const clientId = await rl.question("Client ID: ");
-        const clientSecret = await rl.question("Client Secret: ");
+          const clientId = (await rl.question("Client ID: ")).trim();
+          const clientSecret = (await rl.question("Client Secret: ")).trim();
 
-        if (!clientId.trim() || !clientSecret.trim()) {
-          printError("Client ID and Client Secret are required.");
-          process.exit(1);
-        }
+          if (!clientId || !clientSecret) {
+            fail("Client ID and Client Secret are required.");
+          }
 
-        // Region picks the Login with Amazon consent page, so ask before opening the browser.
-        const regionAnswer = await rl.question(`Region (${REGIONS.join("/")}) [NA]: `);
-        const region = normalizeRegion(regionAnswer);
-        const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
-        const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
+          // Region picks the Login with Amazon consent page, so ask before opening the browser.
+          const regionAnswer = await rl.question(`Region (${REGIONS.join("/")}) [NA]: `);
+          const region = normalizeRegion(regionAnswer);
+          const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
+          const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
 
-        const authUrl = buildConsentUrl(region, clientId.trim(), REDIRECT_URI);
+          // Random state ties the callback to this login attempt (CSRF protection).
+          const state = randomBytes(16).toString("hex");
+          const authUrl = buildConsentUrl(region, clientId, REDIRECT_URI, state);
 
-        console.log("\nStarting local callback server on http://localhost:3000...");
+          console.log(`\nStarting local callback server on http://localhost:${CALLBACK_PORT}...`);
 
-        await new Promise<void>((resolve, reject) => {
-          const server = http.createServer(async (req, res) => {
-            const url = new URL(req.url || "", `http://${req.headers.host}`);
+          const refreshToken = await new Promise<string>((resolve, reject) => {
+            const server = http.createServer(async (req, res) => {
+              const url = new URL(req.url || "", `http://${req.headers.host}`);
 
-            if (url.pathname !== "/callback") {
-              res.writeHead(404);
-              res.end("Not found");
-              return;
-            }
-
-            const code = url.searchParams.get("code");
-            const error = url.searchParams.get("error");
-
-            if (error) {
-              res.writeHead(400, { "Content-Type": "text/html" });
-              res.end(htmlPage("Authorization Failed", `Error: ${error}`));
-              printError(`\nAuthorization failed: ${error}`);
-              server.close();
-              reject(new Error(error));
-              return;
-            }
-
-            if (!code) {
-              res.writeHead(400, { "Content-Type": "text/html" });
-              res.end(htmlPage("Missing Authorization Code", "No code received."));
-              server.close();
-              reject(new Error("No authorization code received"));
-              return;
-            }
-
-            try {
-              const tokenData = new URLSearchParams({
-                grant_type: "authorization_code",
-                code,
-                redirect_uri: REDIRECT_URI,
-                client_id: clientId.trim(),
-                client_secret: clientSecret.trim(),
-              });
-
-              const response = await fetch(getTokenUrl(region), {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: tokenData.toString(),
-              });
-
-              if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`Token exchange failed: ${errText}`);
+              if (url.pathname !== "/callback") {
+                res.writeHead(404);
+                res.end("Not found");
+                return;
               }
 
-              const tokens = await response.json() as { refresh_token: string };
+              let code: string;
+              try {
+                code = parseCallback(url.searchParams, state);
+              } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                res.writeHead(400, { "Content-Type": "text/html" });
+                res.end(htmlPage("Authorization Failed", message));
+                server.close();
+                reject(new Error(message));
+                return;
+              }
 
-              res.writeHead(200, { "Content-Type": "text/html" });
-              res.end(htmlPage("Success!", "Your token has been saved. You can close this window."));
+              try {
+                const tokenData = new URLSearchParams({
+                  grant_type: "authorization_code",
+                  code,
+                  redirect_uri: REDIRECT_URI,
+                  client_id: clientId,
+                  client_secret: clientSecret,
+                });
 
-              server.close(() => {
-                try {
-                  const existing = loadConfig();
-                  saveConfig({
-                    ...existing,
-                    clientId: clientId.trim(),
-                    clientSecret: clientSecret.trim(),
-                    refreshToken: tokens.refresh_token,
-                    region,
-                    sandbox,
-                  });
+                const response = await fetch(getTokenUrl(region), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                  body: tokenData.toString(),
+                });
 
-                  printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
-                  resolve();
-                } catch (e) {
-                  reject(e);
+                if (!response.ok) {
+                  const errText = await response.text();
+                  throw new Error(`Token exchange failed: ${errText}`);
                 }
-              });
-            } catch (e) {
-              res.writeHead(500, { "Content-Type": "text/html" });
-              res.end(htmlPage("Token Exchange Failed", String(e)));
-              server.close();
-              reject(e);
-            }
+
+                const tokens = (await response.json()) as { refresh_token: string };
+
+                res.writeHead(200, { "Content-Type": "text/html" });
+                res.end(
+                  htmlPage("Success!", "Your token has been saved. You can close this window.")
+                );
+                server.close(() => resolve(tokens.refresh_token));
+              } catch (e) {
+                res.writeHead(500, { "Content-Type": "text/html" });
+                res.end(
+                  htmlPage("Token Exchange Failed", e instanceof Error ? e.message : String(e))
+                );
+                server.close();
+                reject(e);
+              }
+            });
+
+            server.listen(CALLBACK_PORT, "127.0.0.1", async () => {
+              console.log("Callback server started.\n");
+              console.log("Opening browser to Amazon OAuth...");
+              console.log(`\n  ${authUrl.toString()}\n`);
+              console.log("If the browser doesn't open, copy and paste the URL above.\n");
+              console.log("Waiting for authorization...\n");
+
+              try {
+                const open = await import("open");
+                await open.default(authUrl.toString());
+              } catch {
+                // open not available; user will copy/paste
+              }
+            });
+
+            server.on("error", (err) => {
+              reject(new Error(listenErrorMessage(err, CALLBACK_PORT)));
+            });
           });
 
-          server.listen(3000, "127.0.0.1", async () => {
-            console.log("Callback server started.\n");
-            console.log("Opening browser to Amazon OAuth...");
-            console.log(`\n  ${authUrl.toString()}\n`);
-            console.log("If the browser doesn't open, copy and paste the URL above.\n");
-            console.log("Waiting for authorization...\n");
-
-            try {
-              const open = await import("open");
-              await open.default(authUrl.toString());
-            } catch {
-              // open not available; user will copy/paste
-            }
+          const existing = loadConfig();
+          saveConfig({
+            ...existing,
+            clientId,
+            clientSecret,
+            refreshToken,
+            region,
+            sandbox,
           });
 
-          server.on("error", (err) => {
-            reject(err);
-          });
-        });
-      } catch (err) {
-        printError(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      } finally {
-        rl.close();
-      }
-    });
+          printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
+        } finally {
+          rl.close();
+        }
+      })
+    );
 
   auth
     .command("status")
@@ -186,8 +208,4 @@ export function registerAuthCommands(program: Command): void {
       deleteConfig();
       printSuccess("Logged out. Config file deleted.");
     });
-}
-
-function htmlPage(title: string, body: string): string {
-  return `<html><body style="font-family:Arial,sans-serif;padding:50px;text-align:center"><h1>${title}</h1><p>${body}</p></body></html>`;
 }

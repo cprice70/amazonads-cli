@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildConsentUrl, getTokenUrl, normalizeRegion } from "../lwa.js";
+import { buildConsentUrl, getTokenUrl, normalizeRegion, parseCallback } from "../lwa.js";
 
 describe("normalizeRegion", () => {
   it("defaults to NA when empty", () => {
@@ -46,5 +46,42 @@ describe("buildConsentUrl", () => {
     expect(url.searchParams.get("scope")).toBe("advertising::campaign_management");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:3000/callback");
+  });
+});
+
+describe("buildConsentUrl state", () => {
+  it("carries the state value so the callback can be verified", () => {
+    const url = buildConsentUrl("NA", "cid", "http://localhost:3000/callback", "abc123");
+    expect(url.searchParams.get("state")).toBe("abc123");
+  });
+});
+
+describe("parseCallback", () => {
+  it("returns the code when state matches", () => {
+    const params = new URLSearchParams({ code: "the-code", state: "s1" });
+    expect(parseCallback(params, "s1")).toBe("the-code");
+  });
+
+  it("rejects a callback whose state does not match", () => {
+    const params = new URLSearchParams({ code: "the-code", state: "other" });
+    expect(() => parseCallback(params, "s1")).toThrow(/state/i);
+  });
+
+  it("rejects a callback with no state at all", () => {
+    const params = new URLSearchParams({ code: "the-code" });
+    expect(() => parseCallback(params, "s1")).toThrow(/state/i);
+  });
+
+  it("surfaces the provider's error before checking anything else", () => {
+    const params = new URLSearchParams({
+      error: "access_denied",
+      error_description: "User said no",
+    });
+    expect(() => parseCallback(params, "s1")).toThrow(/access_denied.*User said no/);
+  });
+
+  it("rejects a callback with no code", () => {
+    const params = new URLSearchParams({ state: "s1" });
+    expect(() => parseCallback(params, "s1")).toThrow(/code/i);
   });
 });

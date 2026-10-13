@@ -16,23 +16,28 @@ function resolveProfileId(_opts: { profile?: string }) {
 
 describe("keywords commands", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
-  let processExitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    processExitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.exitCode = undefined;
   });
 
   it("keywords list outputs JSON when --json flag set", async () => {
     const client = makeClient();
     const mockData = {
       keywords: [
-        { keywordId: "1", keywordText: "running shoes", matchType: "EXACT", state: "ENABLED", bid: 1.25 },
+        {
+          keywordId: "1",
+          keywordText: "running shoes",
+          matchType: "EXACT",
+          state: "ENABLED",
+          bid: 1.25,
+        },
       ],
     };
     (client.getKeywords as ReturnType<typeof vi.fn>).mockResolvedValue(mockData);
@@ -63,7 +68,15 @@ describe("keywords commands", () => {
     const client = makeClient();
     (client.getKeywords as ReturnType<typeof vi.fn>).mockResolvedValue({
       keywords: [
-        { keywordId: "55", keywordText: "blue widget", matchType: "BROAD", state: "PAUSED", bid: 0.75, campaignId: "10", adGroupId: "20" },
+        {
+          keywordId: "55",
+          keywordText: "blue widget",
+          matchType: "BROAD",
+          state: "PAUSED",
+          bid: 0.75,
+          campaignId: "10",
+          adGroupId: "20",
+        },
       ],
     });
 
@@ -87,9 +100,14 @@ describe("keywords commands", () => {
     registerKeywordsCommands(program, client, resolveProfileId);
 
     await program.parseAsync([
-      "node", "cli", "keywords", "update-bid",
-      "--keyword", "kw-123",
-      "--bid", "1.50",
+      "node",
+      "cli",
+      "keywords",
+      "update-bid",
+      "--keyword",
+      "kw-123",
+      "--bid",
+      "1.50",
     ]);
 
     expect(client.updateKeywordBid).toHaveBeenCalledWith("test-profile-123", "kw-123", 1.5);
@@ -103,12 +121,17 @@ describe("keywords commands", () => {
     registerKeywordsCommands(program, client, resolveProfileId);
 
     await program.parseAsync([
-      "node", "cli", "keywords", "update-bid",
-      "--keyword", "kw-123",
-      "--bid", "-5",
+      "node",
+      "cli",
+      "keywords",
+      "update-bid",
+      "--keyword",
+      "kw-123",
+      "--bid",
+      "-5",
     ]);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(client.updateKeywordBid).not.toHaveBeenCalled();
   });
 });
