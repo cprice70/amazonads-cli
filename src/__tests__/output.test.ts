@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { printJson, printSuccess, printError, printWarning, formatCurrency, colorState, printTable } from "../output.js";
+import {
+  printJson,
+  printSuccess,
+  printError,
+  printWarning,
+  formatCurrency,
+  colorState,
+  printTable,
+} from "../output.js";
 
 describe("output", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -18,9 +26,7 @@ describe("output", () => {
 
   it("printJson outputs pretty JSON", () => {
     printJson({ key: "value", num: 42 });
-    expect(consoleSpy).toHaveBeenCalledWith(
-      JSON.stringify({ key: "value", num: 42 }, null, 2)
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ key: "value", num: 42 }, null, 2));
   });
 
   it("printSuccess calls console.log", () => {

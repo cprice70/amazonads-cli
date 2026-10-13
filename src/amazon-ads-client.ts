@@ -56,9 +56,7 @@ function throwIfItemsRejected(body: unknown): void {
       })
       .join("\n");
 
-    throw new Error(
-      `Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`
-    );
+    throw new Error(`Amazon Ads API rejected ${errors.length} ${entity} item(s):\n${details}`);
   }
 }
 
@@ -157,7 +155,7 @@ export class AmazonAdsClient {
     const url = `${this.getEndpoint()}${path}`;
     const ct = contentType || "application/json";
     const headers: Record<string, string> = {
-      "Authorization": `Bearer ${this.accessToken}`,
+      Authorization: `Bearer ${this.accessToken}`,
       "Amazon-Advertising-API-ClientId": this.config.clientId!,
     };
 
@@ -265,11 +263,7 @@ export class AmazonAdsClient {
     return this.makeRequest("GET", "/v2/profiles");
   }
 
-  async getCampaigns(
-    profileId: string,
-    state?: string,
-    campaignType?: string
-  ): Promise<unknown> {
+  async getCampaigns(profileId: string, state?: string, campaignType?: string): Promise<unknown> {
     // v3 API uses POST with filters in body
     let path = "/sp/campaigns/list";
     let contentType = "application/vnd.spcampaign.v3+json";
@@ -319,10 +313,7 @@ export class AmazonAdsClient {
    * Create an async v3 report. Returns the reportId; poll with getReport()
    * or waitForReport().
    */
-  async createReport(
-    profileId: string,
-    spec: ReportSpec
-  ): Promise<{ reportId: string }> {
+  async createReport(profileId: string, spec: ReportSpec): Promise<{ reportId: string }> {
     const contentType = "application/vnd.createasyncreportrequest.v3+json";
     const body = {
       name: spec.name,
@@ -339,13 +330,9 @@ export class AmazonAdsClient {
       },
     };
 
-    return this.makeRequest(
-      "POST",
-      "/reporting/reports",
-      profileId,
-      body,
-      contentType
-    ) as Promise<{ reportId: string }>;
+    return this.makeRequest("POST", "/reporting/reports", profileId, body, contentType) as Promise<{
+      reportId: string;
+    }>;
   }
 
   /**
@@ -410,11 +397,11 @@ export class AmazonAdsClient {
   }
 
   async getReport(profileId: string, reportId: string): Promise<unknown> {
-    const statusResponse = await this.makeRequest(
+    const statusResponse = (await this.makeRequest(
       "GET",
       `/reporting/reports/${reportId}`,
       profileId
-    ) as { status: string; url?: string; failureReason?: string };
+    )) as { status: string; url?: string; failureReason?: string };
 
     if (statusResponse.status === "COMPLETED" && statusResponse.url) {
       const reportData = await this.downloadReport(statusResponse.url);
@@ -439,11 +426,7 @@ export class AmazonAdsClient {
     };
   }
 
-  async getKeywords(
-    profileId: string,
-    campaignId?: string,
-    adGroupId?: string
-  ): Promise<unknown> {
+  async getKeywords(profileId: string, campaignId?: string, adGroupId?: string): Promise<unknown> {
     const path = "/sp/keywords/list";
     const contentType = "application/vnd.spkeyword.v3+json";
 
@@ -460,11 +443,7 @@ export class AmazonAdsClient {
     return this.listAll(path, profileId, body, contentType, "keywords");
   }
 
-  async updateKeywordBid(
-    profileId: string,
-    keywordId: string,
-    bid: number
-  ): Promise<unknown> {
+  async updateKeywordBid(profileId: string, keywordId: string, bid: number): Promise<unknown> {
     const contentType = "application/vnd.spkeyword.v3+json";
     const body = {
       keywords: [
@@ -502,7 +481,7 @@ export class AmazonAdsClient {
         {
           name,
           targetingType,
-          state: "PAUSED",  // Default to PAUSED for safety - won't spend money
+          state: "PAUSED", // Default to PAUSED for safety - won't spend money
           budget: {
             budgetType: "DAILY",
             budget: dailyBudget,

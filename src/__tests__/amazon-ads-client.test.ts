@@ -36,9 +36,7 @@ describe("AmazonAdsClient token refresh", () => {
   });
 
   it("refreshes against the regional Login with Amazon host", async () => {
-    fetchMock
-      .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse(200, []));
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse(200, []));
 
     await makeClient("EU").getProfiles();
 
@@ -101,7 +99,9 @@ describe("AmazonAdsClient multi-status handling", () => {
           error: [
             {
               index: 0,
-              errors: [{ errorType: "DUPLICATE_VALUE", errorValue: { message: "Name already used" } }],
+              errors: [
+                { errorType: "DUPLICATE_VALUE", errorValue: { message: "Name already used" } },
+              ],
             },
           ],
         },
@@ -109,7 +109,14 @@ describe("AmazonAdsClient multi-status handling", () => {
     );
 
     await expect(
-      makeClient().createCampaign("profile-1", "Dup", "sponsoredProducts", "MANUAL", 10, "2026-10-13")
+      makeClient().createCampaign(
+        "profile-1",
+        "Dup",
+        "sponsoredProducts",
+        "MANUAL",
+        10,
+        "2026-10-13"
+      )
     ).rejects.toThrow(/DUPLICATE_VALUE/);
   });
 
@@ -179,7 +186,9 @@ describe("AmazonAdsClient.getCampaignPerformance", () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: "PENDING" }));
     }
     fetchMock
-      .mockResolvedValueOnce(jsonResponse(200, { status: "COMPLETED", url: "https://example.com/r1.gz" }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { status: "COMPLETED", url: "https://example.com/r1.gz" })
+      )
       .mockResolvedValueOnce(gzipResponse([{ campaignId: 1 }]));
 
     const pending = makeClient().getCampaignPerformance("p", "1", "2026-10-01", "2026-10-10");
@@ -223,7 +232,9 @@ describe("AmazonAdsClient list pagination", () => {
       .mockResolvedValueOnce(
         jsonResponse(200, { campaigns: [{ campaignId: "1" }], totalResults: 2, nextToken: "page2" })
       )
-      .mockResolvedValueOnce(jsonResponse(200, { campaigns: [{ campaignId: "2" }], totalResults: 2 }));
+      .mockResolvedValueOnce(
+        jsonResponse(200, { campaigns: [{ campaignId: "2" }], totalResults: 2 })
+      );
 
     const result = await makeClient().getCampaigns("p", "enabled");
 
@@ -238,7 +249,9 @@ describe("AmazonAdsClient list pagination", () => {
   it("makes a single request when the first page has no nextToken", async () => {
     fetchMock
       .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { keywords: [{ keywordId: "k1" }], totalResults: 1 }));
+      .mockResolvedValueOnce(
+        jsonResponse(200, { keywords: [{ keywordId: "k1" }], totalResults: 1 })
+      );
 
     const result = await makeClient().getKeywords("p", "c1");
 
@@ -252,7 +265,9 @@ describe("AmazonAdsClient list pagination", () => {
       .mockResolvedValueOnce(tokenResponse())
       .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a1" }], nextToken: "n" }))
       .mockResolvedValueOnce(jsonResponse(200, { productAds: [{ adId: "a2" }] }))
-      .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 1 }], nextToken: "n" }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { portfolios: [{ portfolioId: 1 }], nextToken: "n" })
+      )
       .mockResolvedValueOnce(jsonResponse(200, { portfolios: [{ portfolioId: 2 }] }));
 
     const client = makeClient();
@@ -300,7 +315,9 @@ describe("AmazonAdsClient request hardening", () => {
     const outcome = pending.catch((e: Error) => e);
     await vi.runAllTimersAsync();
 
-    await expect(outcome).resolves.toMatchObject({ message: expect.stringMatching(/fetch failed/) });
+    await expect(outcome).resolves.toMatchObject({
+      message: expect.stringMatching(/fetch failed/),
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1 + 4);
   });
 

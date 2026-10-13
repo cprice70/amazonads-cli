@@ -5,11 +5,11 @@ import {
   printTable,
   printJson,
   printSuccess,
-  printError,
   printWarning,
   colorState,
   formatCurrency,
 } from "../output.js";
+import { runAction, fail } from "../run-action.js";
 import { choiceOption, CAMPAIGN_TYPES, CAMPAIGN_STATES, TARGETING_TYPES } from "../options.js";
 
 interface Campaign {
@@ -47,8 +47,8 @@ export function registerCampaignsCommands(
     .addOption(choiceOption("--state <state>", "Filter by state", CAMPAIGN_STATES))
     .addOption(choiceOption("--type <type>", "Campaign type", CAMPAIGN_TYPES))
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const data = await client.getCampaigns(profileId, opts.state, opts.type);
 
@@ -74,23 +74,22 @@ export function registerCampaignsCommands(
         ]);
 
         printTable(headers, rows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("performance")
-    .description("Get campaign performance (7-day attribution); waits for Amazon to build the report")
+    .description(
+      "Get campaign performance (7-day attribution); waits for Amazon to build the report"
+    )
     .requiredOption("--campaign <id>", "Campaign ID")
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .requiredOption("--end <date>", "End date (YYYY-MM-DD)")
     .option("--timeout <seconds>", "Max seconds to wait for the report", "600")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const timeoutMs = Math.max(1, parseInt(opts.timeout, 10) || 600) * 1000;
         if (!opts.json) printWarning("Waiting for Amazon to generate the report...");
@@ -115,7 +114,8 @@ export function registerCampaignsCommands(
         const headers = ["Campaign ID", "Name", "Impressions", "Clicks", "Spend", "Sales", "ACOS"];
         const tableRows = data.map((r) => {
           const spend = typeof r.cost === "number" ? r.cost : parseFloat(String(r.cost || 0));
-          const sales = typeof r.sales7d === "number" ? r.sales7d : parseFloat(String(r.sales7d || 0));
+          const sales =
+            typeof r.sales7d === "number" ? r.sales7d : parseFloat(String(r.sales7d || 0));
           const acos = sales > 0 ? ((spend / sales) * 100).toFixed(1) + "%" : "N/A";
           return [
             String(r.campaignId || ""),
@@ -129,11 +129,8 @@ export function registerCampaignsCommands(
         });
 
         printTable(headers, tableRows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("create")
@@ -150,15 +147,13 @@ export function registerCampaignsCommands(
     .requiredOption("--start <date>", "Start date (YYYY-MM-DD)")
     .option("--profile <id>", "Profile ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const budget = parseFloat(opts.budget);
 
         if (isNaN(budget) || budget <= 0) {
-          printError("Budget must be a positive number.");
-          process.exit(1);
-          return;
+          fail("Budget must be a positive number.");
         }
 
         const data = await client.createCampaign(
@@ -170,7 +165,9 @@ export function registerCampaignsCommands(
           opts.start
         );
 
-        printWarning("Campaign created in PAUSED state. Enable it in the Amazon Ads console when ready.");
+        printWarning(
+          "Campaign created in PAUSED state. Enable it in the Amazon Ads console when ready."
+        );
 
         if (opts.json) {
           printJson(data);
@@ -178,11 +175,8 @@ export function registerCampaignsCommands(
           printSuccess("Campaign created successfully.");
           printJson(data);
         }
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   campaigns
     .command("archive")
@@ -192,8 +186,8 @@ export function registerCampaignsCommands(
     .option("--profile <id>", "Profile ID")
     .option("--confirm", "Skip confirmation prompt")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
 
         if (!opts.confirm) {
@@ -221,9 +215,6 @@ export function registerCampaignsCommands(
         } else {
           printSuccess(`Campaign ${opts.campaign} archived successfully.`);
         }
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

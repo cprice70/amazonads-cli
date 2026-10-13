@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { AmazonAdsClient } from "../amazon-ads-client.js";
-import { printTable, printJson, printError, colorState } from "../output.js";
+import { printTable, printJson, colorState } from "../output.js";
+import { runAction, fail } from "../run-action.js";
 
 interface ProductAd {
   adId?: string | number;
@@ -36,8 +37,8 @@ export function registerAdsCommands(
     .option("--campaign <id>", "Filter by campaign ID")
     .option("--ad-group <id>", "Filter by ad group ID")
     .option("--json", "Output as JSON")
-    .action(async (opts) => {
-      try {
+    .action(
+      runAction(async (opts) => {
         const profileId = resolveProfileId(opts);
         const data = await client.getProductAds(profileId, opts.campaign, opts.adGroup);
 
@@ -63,9 +64,6 @@ export function registerAdsCommands(
         ]);
 
         printTable(headers, rows);
-      } catch (err) {
-        printError(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+      })
+    );
 }

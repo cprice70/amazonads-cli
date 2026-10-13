@@ -4,14 +4,9 @@ import { URL } from "url";
 import readline from "readline/promises";
 import { Command } from "commander";
 import { loadConfig, saveConfig, deleteConfig, getConfigPath } from "../config.js";
-import { printSuccess, printError, printWarning } from "../output.js";
-import {
-  buildConsentUrl,
-  getTokenUrl,
-  normalizeRegion,
-  parseCallback,
-  REGIONS,
-} from "../lwa.js";
+import { printSuccess, printWarning } from "../output.js";
+import { runAction, fail } from "../run-action.js";
+import { buildConsentUrl, getTokenUrl, normalizeRegion, parseCallback, REGIONS } from "../lwa.js";
 
 const CALLBACK_PORT = 3000;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
@@ -57,129 +52,131 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("login")
     .description("Authenticate with Amazon Ads OAuth")
-    .action(async () => {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+    .action(
+      runAction(async () => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
 
-      try {
-        console.log("\nAmazon Ads CLI — OAuth Login");
-        console.log("=============================\n");
+        try {
+          console.log("\nAmazon Ads CLI — OAuth Login");
+          console.log("=============================\n");
 
-        const clientId = (await rl.question("Client ID: ")).trim();
-        const clientSecret = (await rl.question("Client Secret: ")).trim();
+          const clientId = (await rl.question("Client ID: ")).trim();
+          const clientSecret = (await rl.question("Client Secret: ")).trim();
 
-        if (!clientId || !clientSecret) {
-          printError("Client ID and Client Secret are required.");
-          process.exit(1);
-        }
+          if (!clientId || !clientSecret) {
+            fail("Client ID and Client Secret are required.");
+          }
 
-        // Region picks the Login with Amazon consent page, so ask before opening the browser.
-        const regionAnswer = await rl.question(`Region (${REGIONS.join("/")}) [NA]: `);
-        const region = normalizeRegion(regionAnswer);
-        const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
-        const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
+          // Region picks the Login with Amazon consent page, so ask before opening the browser.
+          const regionAnswer = await rl.question(`Region (${REGIONS.join("/")}) [NA]: `);
+          const region = normalizeRegion(regionAnswer);
+          const sandboxAnswer = await rl.question("Sandbox mode? (y/N): ");
+          const sandbox = sandboxAnswer.trim().toLowerCase() === "y";
 
-        // Random state ties the callback to this login attempt (CSRF protection).
-        const state = randomBytes(16).toString("hex");
-        const authUrl = buildConsentUrl(region, clientId, REDIRECT_URI, state);
+          // Random state ties the callback to this login attempt (CSRF protection).
+          const state = randomBytes(16).toString("hex");
+          const authUrl = buildConsentUrl(region, clientId, REDIRECT_URI, state);
 
-        console.log(`\nStarting local callback server on http://localhost:${CALLBACK_PORT}...`);
+          console.log(`\nStarting local callback server on http://localhost:${CALLBACK_PORT}...`);
 
-        const refreshToken = await new Promise<string>((resolve, reject) => {
-          const server = http.createServer(async (req, res) => {
-            const url = new URL(req.url || "", `http://${req.headers.host}`);
+          const refreshToken = await new Promise<string>((resolve, reject) => {
+            const server = http.createServer(async (req, res) => {
+              const url = new URL(req.url || "", `http://${req.headers.host}`);
 
-            if (url.pathname !== "/callback") {
-              res.writeHead(404);
-              res.end("Not found");
-              return;
-            }
-
-            let code: string;
-            try {
-              code = parseCallback(url.searchParams, state);
-            } catch (e) {
-              const message = e instanceof Error ? e.message : String(e);
-              res.writeHead(400, { "Content-Type": "text/html" });
-              res.end(htmlPage("Authorization Failed", message));
-              server.close();
-              reject(new Error(message));
-              return;
-            }
-
-            try {
-              const tokenData = new URLSearchParams({
-                grant_type: "authorization_code",
-                code,
-                redirect_uri: REDIRECT_URI,
-                client_id: clientId,
-                client_secret: clientSecret,
-              });
-
-              const response = await fetch(getTokenUrl(region), {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: tokenData.toString(),
-              });
-
-              if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`Token exchange failed: ${errText}`);
+              if (url.pathname !== "/callback") {
+                res.writeHead(404);
+                res.end("Not found");
+                return;
               }
 
-              const tokens = (await response.json()) as { refresh_token: string };
+              let code: string;
+              try {
+                code = parseCallback(url.searchParams, state);
+              } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                res.writeHead(400, { "Content-Type": "text/html" });
+                res.end(htmlPage("Authorization Failed", message));
+                server.close();
+                reject(new Error(message));
+                return;
+              }
 
-              res.writeHead(200, { "Content-Type": "text/html" });
-              res.end(htmlPage("Success!", "Your token has been saved. You can close this window."));
-              server.close(() => resolve(tokens.refresh_token));
-            } catch (e) {
-              res.writeHead(500, { "Content-Type": "text/html" });
-              res.end(htmlPage("Token Exchange Failed", e instanceof Error ? e.message : String(e)));
-              server.close();
-              reject(e);
-            }
+              try {
+                const tokenData = new URLSearchParams({
+                  grant_type: "authorization_code",
+                  code,
+                  redirect_uri: REDIRECT_URI,
+                  client_id: clientId,
+                  client_secret: clientSecret,
+                });
+
+                const response = await fetch(getTokenUrl(region), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                  body: tokenData.toString(),
+                });
+
+                if (!response.ok) {
+                  const errText = await response.text();
+                  throw new Error(`Token exchange failed: ${errText}`);
+                }
+
+                const tokens = (await response.json()) as { refresh_token: string };
+
+                res.writeHead(200, { "Content-Type": "text/html" });
+                res.end(
+                  htmlPage("Success!", "Your token has been saved. You can close this window.")
+                );
+                server.close(() => resolve(tokens.refresh_token));
+              } catch (e) {
+                res.writeHead(500, { "Content-Type": "text/html" });
+                res.end(
+                  htmlPage("Token Exchange Failed", e instanceof Error ? e.message : String(e))
+                );
+                server.close();
+                reject(e);
+              }
+            });
+
+            server.listen(CALLBACK_PORT, "127.0.0.1", async () => {
+              console.log("Callback server started.\n");
+              console.log("Opening browser to Amazon OAuth...");
+              console.log(`\n  ${authUrl.toString()}\n`);
+              console.log("If the browser doesn't open, copy and paste the URL above.\n");
+              console.log("Waiting for authorization...\n");
+
+              try {
+                const open = await import("open");
+                await open.default(authUrl.toString());
+              } catch {
+                // open not available; user will copy/paste
+              }
+            });
+
+            server.on("error", (err) => {
+              reject(new Error(listenErrorMessage(err, CALLBACK_PORT)));
+            });
           });
 
-          server.listen(CALLBACK_PORT, "127.0.0.1", async () => {
-            console.log("Callback server started.\n");
-            console.log("Opening browser to Amazon OAuth...");
-            console.log(`\n  ${authUrl.toString()}\n`);
-            console.log("If the browser doesn't open, copy and paste the URL above.\n");
-            console.log("Waiting for authorization...\n");
-
-            try {
-              const open = await import("open");
-              await open.default(authUrl.toString());
-            } catch {
-              // open not available; user will copy/paste
-            }
+          const existing = loadConfig();
+          saveConfig({
+            ...existing,
+            clientId,
+            clientSecret,
+            refreshToken,
+            region,
+            sandbox,
           });
 
-          server.on("error", (err) => {
-            reject(new Error(listenErrorMessage(err, CALLBACK_PORT)));
-          });
-        });
-
-        const existing = loadConfig();
-        saveConfig({
-          ...existing,
-          clientId,
-          clientSecret,
-          refreshToken,
-          region,
-          sandbox,
-        });
-
-        printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
-      } catch (err) {
-        printError(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      } finally {
-        rl.close();
-      }
-    });
+          printSuccess(`\nAuthentication successful! Config saved to ${getConfigPath()}`);
+        } finally {
+          rl.close();
+        }
+      })
+    );
 
   auth
     .command("status")
